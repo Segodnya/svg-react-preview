@@ -79,12 +79,22 @@ Precedence: `SVG_REACT_PREVIEW_FILE`+`ROW`+`COLUMN` → `SVG_REACT_PREVIEW_INPUT
 ## Development
 
 ```bash
-make test       # run golden fixtures in tests/fixtures/
-make install    # install svg-react-preview into ~/.cargo/bin
-make help       # list all available targets
+make test            # run unit + integration + CLI tests
+make install         # install svg-react-preview into ~/.cargo/bin
+make help            # list all available targets
 ```
 
 Previews are written to `$TMPDIR/svg-react-preview/<xxhash>.svg` (the file name is a stable hash of the source — re-opening the same fragment doesn't create new files).
+
+### Test coverage
+
+Requires `cargo install cargo-llvm-cov` once. On Homebrew Rust (no rustup) the Makefile points at `/opt/homebrew/opt/llvm/bin/llvm-cov*` automatically — override `LLVM_COV` / `LLVM_PROFDATA` if your toolchain differs.
+
+```bash
+make coverage        # per-file summary + uncovered line numbers
+make coverage-html   # HTML report at target/llvm-cov/html/index.html
+make coverage-gate   # fail if line coverage drops below 95% (override: COVERAGE_MIN=…)
+```
 
 ## License
 

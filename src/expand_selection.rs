@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use swc_common::{sync::Lrc, FileName, SourceMap, Spanned};
+use anyhow::{Result, anyhow};
+use swc_common::{FileName, SourceMap, Spanned, sync::Lrc};
 use swc_ecma_ast::{EsVersion, JSXElement, JSXElementName};
 use swc_ecma_parser::parse_file_as_module;
 use swc_ecma_visit::{Visit, VisitWith};
@@ -220,5 +220,34 @@ mod tests {
     fn unparseable_file_errors() {
         let err = find_svg_at("<svg><path/>", 1, 7).unwrap_err().to_string();
         assert!(err.contains("not parseable as TSX"), "got: {err}");
+    }
+
+    #[test]
+    fn row_zero_is_invalid() {
+        let err = find_svg_at("const x = <svg/>;", 0, 1)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("past end of file"), "got: {err}");
+    }
+
+    #[test]
+    fn col_zero_is_invalid() {
+        let err = find_svg_at("const x = <svg/>;", 1, 0)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("past end of file"), "got: {err}");
+    }
+
+    #[test]
+    fn col_past_line_via_newline_is_invalid() {
+        // Line 1 has 2 characters; column 5 walks past the newline.
+        let err = find_svg_at("ab\ncd", 1, 5).unwrap_err().to_string();
+        assert!(err.contains("past end of file"), "got: {err}");
+    }
+
+    #[test]
+    fn col_past_eof_without_newline_is_invalid() {
+        let err = find_svg_at("x", 1, 100).unwrap_err().to_string();
+        assert!(err.contains("past end of file"), "got: {err}");
     }
 }

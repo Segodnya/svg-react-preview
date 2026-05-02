@@ -19,3 +19,35 @@ pub fn fallback_for(attr: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn size_family() {
+        assert_eq!(fallback_for("size"), Some(SIZE));
+        assert_eq!(fallback_for("width"), Some(SIZE));
+        assert_eq!(fallback_for("height"), Some(SIZE));
+    }
+
+    #[test]
+    fn color_family() {
+        assert_eq!(fallback_for("color"), Some(FILL));
+        assert_eq!(fallback_for("fill"), Some(FILL));
+    }
+
+    #[test]
+    fn stroke_family() {
+        assert_eq!(fallback_for("stroke"), Some(STROKE));
+        assert_eq!(fallback_for("strokeWidth"), Some(STROKE_WIDTH));
+        assert_eq!(fallback_for("stroke-width"), Some(STROKE_WIDTH));
+    }
+
+    #[test]
+    fn unknown_attrs_return_none() {
+        assert_eq!(fallback_for("d"), None);
+        assert_eq!(fallback_for("viewBox"), None);
+        assert_eq!(fallback_for(""), None);
+    }
+}

@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use svg_react_preview::{expand_selection, parse, serialize, transform};
 use swc_ecma_ast::Expr;
 

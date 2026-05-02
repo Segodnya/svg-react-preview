@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
-use swc_common::{sync::Lrc, FileName, SourceMap};
+use anyhow::{Result, anyhow};
+use swc_common::{FileName, SourceMap, sync::Lrc};
 use swc_ecma_ast::{EsVersion, Expr};
-use swc_ecma_parser::{parse_file_as_expr, Syntax, TsSyntax};
+use swc_ecma_parser::{Syntax, TsSyntax, parse_file_as_expr};
 
 /// Shared TSX parser configuration used by `parse_jsx` and `expand_selection`.
 pub fn tsx_syntax() -> Syntax {

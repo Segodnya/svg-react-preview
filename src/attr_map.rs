@@ -177,4 +177,86 @@ mod tests {
         assert!(matches!(map_attr("fill"), AttrAction::Passthrough));
         assert!(matches!(map_attr("d"), AttrAction::Passthrough));
     }
+
+    #[test]
+    fn react_only_attrs_dropped() {
+        assert!(matches!(map_attr("htmlFor"), AttrAction::Drop));
+        assert!(matches!(map_attr("ref"), AttrAction::Drop));
+        assert!(matches!(map_attr("key"), AttrAction::Drop));
+    }
+
+    #[test]
+    fn dangerous_html_warns() {
+        assert!(matches!(
+            map_attr("dangerouslySetInnerHTML"),
+            AttrAction::DropWarn(_)
+        ));
+    }
+
+    #[test]
+    fn class_name_renamed_to_class() {
+        assert!(matches!(map_attr("className"), AttrAction::Use("class")));
+    }
+
+    #[test]
+    fn panose1_renamed_to_panose_1() {
+        assert!(matches!(map_attr("panose1"), AttrAction::Use("panose-1")));
+    }
+
+    #[test]
+    fn xlink_attrs_namespaced() {
+        assert!(matches!(
+            map_attr("xlinkActuate"),
+            AttrAction::Use("xlink:actuate")
+        ));
+        assert!(matches!(
+            map_attr("xlinkArcrole"),
+            AttrAction::Use("xlink:arcrole")
+        ));
+        assert!(matches!(
+            map_attr("xlinkHref"),
+            AttrAction::Use("xlink:href")
+        ));
+        assert!(matches!(
+            map_attr("xlinkRole"),
+            AttrAction::Use("xlink:role")
+        ));
+        assert!(matches!(
+            map_attr("xlinkShow"),
+            AttrAction::Use("xlink:show")
+        ));
+        assert!(matches!(
+            map_attr("xlinkTitle"),
+            AttrAction::Use("xlink:title")
+        ));
+        assert!(matches!(
+            map_attr("xlinkType"),
+            AttrAction::Use("xlink:type")
+        ));
+        assert!(matches!(
+            map_attr("xmlnsXlink"),
+            AttrAction::Use("xmlns:xlink")
+        ));
+    }
+
+    #[test]
+    fn xml_attrs_namespaced() {
+        assert!(matches!(map_attr("xmlBase"), AttrAction::Use("xml:base")));
+        assert!(matches!(map_attr("xmlLang"), AttrAction::Use("xml:lang")));
+        assert!(matches!(map_attr("xmlSpace"), AttrAction::Use("xml:space")));
+    }
+
+    #[test]
+    fn event_handlers_dropped() {
+        assert!(matches!(map_attr("onClick"), AttrAction::Drop));
+        assert!(matches!(map_attr("onLoad"), AttrAction::Drop));
+        assert!(matches!(map_attr("onMouseEnter"), AttrAction::Drop));
+    }
+
+    #[test]
+    fn on_lowercase_is_not_event_handler() {
+        // "once" / "on" lack an uppercase letter after `on` → not an event handler.
+        assert!(matches!(map_attr("once"), AttrAction::Passthrough));
+        assert!(matches!(map_attr("on"), AttrAction::Passthrough));
+    }
 }
