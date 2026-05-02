@@ -4,6 +4,8 @@ CLI for previewing inline JSX/TSX SVG fragments in the **Zed** editor.
 
 Zed has a native preview for `.svg` files but no way to open SVG defined inline inside JSX. Place the cursor anywhere inside an `<svg>…</svg>` element and run the task — the tool parses the file, finds the enclosing `<svg>`, normalises it into a valid `.svg`, writes it to a temporary directory, and opens it with `zed <path>` so Zed shows the result in a new tab using its built-in SVG preview.
 
+On **macOS**, the rendered preview opens automatically (the tool waits for Zed's window to surface the file, then synthesises `Cmd+Shift+V` to switch the tab into preview mode). On **Linux/Windows**, Zed opens the file as text — press `Ctrl+Shift+V` to switch into preview mode.
+
 ## Install
 
 ```bash
@@ -13,6 +15,10 @@ cargo install --git https://github.com/Segodnya/svg-react-preview
 The binary lands at `~/.cargo/bin/svg-react-preview` (must be on `PATH`).
 
 You also need a `zed` shim on `PATH` (Zed → CLI → Install Shell Command). Without it, the preview is still saved to `$TMPDIR/svg-react-preview/` and the path is printed to stderr.
+
+### macOS: Accessibility permission
+
+Auto-preview synthesises a `Cmd+Shift+V` keystroke via `osascript`. macOS gates synthetic keystrokes behind Accessibility — on first run, grant access in **System Settings → Privacy & Security → Accessibility** to whichever process spawns the binary (typically Zed.app, since the task runs from Zed). Without this permission the file still opens as text and the tool prints a hint to stderr; press `Cmd+Shift+V` manually.
 
 ## Zed configuration
 
@@ -26,7 +32,9 @@ Add the task to `~/.config/zed/tasks.json`:
     "env": {
       "SVG_REACT_PREVIEW_FILE":   "${ZED_FILE}",
       "SVG_REACT_PREVIEW_ROW":    "${ZED_ROW}",
-      "SVG_REACT_PREVIEW_COLUMN": "${ZED_COLUMN}"
+      "SVG_REACT_PREVIEW_COLUMN": "${ZED_COLUMN}",
+      // Optional: override the macOS preview shortcut (default cmd+shift+v).
+      // "SVG_REACT_PREVIEW_HOTKEY": "ctrl+alt+p"
     },
     "use_new_terminal": false,
     "allow_concurrent_runs": true,
@@ -54,16 +62,23 @@ Optional keybinding in `~/.config/zed/keymap.json`:
 
 1. Place the cursor anywhere inside an `<svg>…</svg>` element in a `.tsx` / `.jsx` file — no selection needed. The tool parses the whole file with swc and finds the innermost enclosing `<svg>`.
 2. Run the task (via keybinding or `task: spawn`).
-3. A new tab opens with the preview.
+3. A new tab opens with the preview. On macOS it switches to preview mode automatically; on Linux/Windows press `Ctrl+Shift+V`.
 
 If the cursor is not inside an `<svg>` element, the tool prints a clear error to stderr (`cursor at <file>:<row>:<col> is not inside an <svg> element`).
 
-### Alternative input modes
+## Environment variables
 
-- `SVG_REACT_PREVIEW_INPUT="<svg>…</svg>"` — pass the source directly via env (useful for CI or custom Zed tasks built around `${ZED_SELECTED_TEXT}`).
-- Pipe via stdin: `echo '<path d="M0 0"/>' | svg-react-preview`.
+| Variable                   | Purpose                                                          | Default       |
+|----------------------------|------------------------------------------------------------------|---------------|
+| `SVG_REACT_PREVIEW_FILE`   | JSX/TSX file path. Combined with `ROW`/`COLUMN` for cursor mode. | —             |
+| `SVG_REACT_PREVIEW_ROW`    | 1-based cursor row.                                              | —             |
+| `SVG_REACT_PREVIEW_COLUMN` | 1-based cursor column.                                           | —             |
+| `SVG_REACT_PREVIEW_INPUT`  | Inline SVG/JSX fragment to render directly.                      | —             |
+| `SVG_REACT_PREVIEW_HOTKEY` | macOS preview shortcut, or `none` to disable.                    | `cmd+shift+v` |
 
-Precedence: `SVG_REACT_PREVIEW_FILE`+`ROW`+`COLUMN` → `SVG_REACT_PREVIEW_INPUT` → stdin.
+**Input precedence**: `FILE`+`ROW`+`COLUMN` → `INPUT` → stdin. Stdin example: `echo '<path d="M0 0"/>' | svg-react-preview` (handy for CI or quick smoke tests).
+
+**Hotkey syntax**: `+`-separated tokens, case-insensitive. Modifiers: `cmd`/`command`, `shift`, `alt`/`opt`/`option`, `ctrl`/`control`. Keys: any letter, digit, `f1`–`f12`, `space`, `tab`, `return`/`enter`, `escape`/`esc`. If Zed has no binding for the configured shortcut, the keystroke is silently ignored — set `SVG_REACT_PREVIEW_HOTKEY=none` and trigger preview manually via the toolbar button.
 
 ## Behaviour
 

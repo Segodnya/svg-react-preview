@@ -1,11 +1,12 @@
 use anyhow::{Result, anyhow};
 use swc_ecma_ast::{
-    BinaryOp, Expr, JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement,
-    JSXElementChild, JSXElementName, JSXExpr, Lit, UnaryOp,
+    Expr, JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
+    JSXElementName, JSXExpr,
 };
 
 use crate::attr_map::{AttrAction, camel_to_kebab, map_attr};
-use crate::defaults::{self, fallback_for};
+use crate::defaults;
+use crate::static_eval::{narrow_branch, resolve_attr_value};
 
 #[derive(Debug, Clone)]
 pub enum SvgNode {
@@ -48,29 +49,12 @@ pub fn to_svg(expr: &Expr) -> Result<TransformResult> {
 }
 
 fn walk_expr(expr: &Expr, ctx: &mut Ctx) -> Vec<SvgNode> {
-    match narrow_to_static_branch(expr) {
+    match narrow_branch(expr) {
         Expr::JSXElement(el) => vec![transform_element(el, ctx)],
         Expr::JSXFragment(frag) => transform_children(&frag.children, ctx),
         // Anything else (including the defensive `Expr::JSXEmpty`, which swc's
         // `parse_file_as_expr` does not surface at the top level).
         _ => Vec::new(),
-    }
-}
-
-/// Walks past parenthesisation and statically-decidable branches:
-/// - `(expr)` → `expr`
-/// - `cond ? a : b` → `a`
-/// - `cond && rhs` → `rhs`
-///
-/// Used wherever we need to find the JSX (or value) that would actually render
-/// when the condition is treated as truthy. Centralised so `walk_expr` and
-/// `resolve_expr_value` cannot drift on this rule.
-fn narrow_to_static_branch(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(p) => narrow_to_static_branch(&p.expr),
-        Expr::Cond(c) => narrow_to_static_branch(&c.cons),
-        Expr::Bin(b) if matches!(b.op, BinaryOp::LogicalAnd) => narrow_to_static_branch(&b.right),
-        _ => expr,
     }
 }
 
@@ -162,7 +146,7 @@ fn process_attr(attr: &JSXAttr, ctx: &mut Ctx) -> Option<(String, String)> {
         Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
             // Defensive — swc rejects `attr={}` / `attr={/* */}` at parse time (TS1109).
             JSXExpr::JSXEmptyExpr(_) => return None,
-            JSXExpr::Expr(e) => resolve_expr_value(e, &raw)?,
+            JSXExpr::Expr(e) => resolve_attr_value(e, &raw)?,
         },
         // `None` covers boolean attrs (`attr` without value).
         // `JSXElement`/`JSXFragment` cover `attr=<x/>` — an experimental JSX dialect
@@ -171,36 +155,6 @@ fn process_attr(attr: &JSXAttr, ctx: &mut Ctx) -> Option<(String, String)> {
     };
 
     Some((target, value))
-}
-
-fn resolve_expr_value(e: &Expr, attr_camel: &str) -> Option<String> {
-    match narrow_to_static_branch(e) {
-        Expr::Lit(Lit::Str(s)) => Some(s.value.to_atom_lossy().to_string()),
-        // f64::to_string already prints integer values without a trailing ".0",
-        // so no separate integer cast is needed.
-        Expr::Lit(Lit::Num(n)) => Some(n.value.to_string()),
-        Expr::Lit(Lit::Bool(b)) => Some(b.value.to_string()),
-        Expr::Tpl(t) if t.exprs.is_empty() => {
-            // `cooked` is `None` only on malformed escapes that the parser already
-            // rejects, so the `q.raw` branch is unreachable in practice — keep it
-            // as a defensive fallback rather than a panic.
-            let s: String = t
-                .quasis
-                .iter()
-                .map(|q| {
-                    q.cooked
-                        .as_ref()
-                        .map_or_else(|| q.raw.to_string(), |c| c.to_atom_lossy().to_string())
-                })
-                .collect();
-            Some(s)
-        }
-        Expr::Unary(u) if matches!(u.op, UnaryOp::Minus) => {
-            resolve_expr_value(&u.arg, attr_camel).map(|s| format!("-{s}"))
-        }
-        // Identifiers and member access are unresolvable — fall back by attribute name.
-        _ => fallback_for(attr_camel).map(ToString::to_string),
-    }
 }
 
 fn is_lowercase_tag(s: &str) -> bool {
