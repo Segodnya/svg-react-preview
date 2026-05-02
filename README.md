@@ -4,7 +4,9 @@ CLI for previewing inline JSX/TSX SVG fragments in the **Zed** editor.
 
 Zed has a native preview for `.svg` files but no way to open SVG defined inline inside JSX. Place the cursor anywhere inside an `<svg>…</svg>` element and run the task — the tool parses the file, finds the enclosing `<svg>`, normalises it into a valid `.svg`, writes it to a temporary directory, and opens it with `zed <path>` so Zed shows the result in a new tab using its built-in SVG preview.
 
-On **macOS**, the rendered preview opens automatically (the tool waits for Zed's window to surface the file, then synthesises `Cmd+Shift+V` to switch the tab into preview mode). On **Linux/Windows**, Zed opens the file as text — press `Ctrl+Shift+V` to switch into preview mode.
+On **macOS**, the rendered preview opens automatically: AppleScript opens the file in Zed (so focus is guaranteed before the next keystroke), synthesises `Cmd+Shift+V` to spawn the preview tab, then sends `Cmd+Shift+[` + `Cmd+W` to close the redundant text-mode `.svg` tab — leaving exactly one preview tab per run. On **Linux/Windows**, Zed opens the file as text — press `Ctrl+Shift+V` to switch into preview mode.
+
+> The auto-close step relies on Zed default keymap (`Cmd+Shift+[` = `pane::ActivatePrevItem`, `Cmd+W` = `pane::CloseActiveItem`) and on the preview tab opening to the right of the source text tab in the same pane. If you remap those actions or your Zed opens preview in a split pane, the wrong tab may close — set `SVG_REACT_PREVIEW_HOTKEY=none` to disable all keystroke synthesis and trigger preview manually.
 
 ## Install
 
@@ -52,7 +54,7 @@ Optional keybinding in `~/.config/zed/keymap.json`:
   {
     "context": "Editor",
     "bindings": {
-      "cmd-shift-v": ["task::Spawn", { "task_name": "Preview SVG (cursor)" }]
+      "alt-shift-v": ["task::Spawn", { "task_name": "Preview SVG (cursor)" }]
     }
   }
 ]

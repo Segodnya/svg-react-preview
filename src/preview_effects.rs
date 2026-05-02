@@ -1,10 +1,39 @@
 //! Delivers a rendered SVG to the user.
 //!
 //! Two side effects, one decision: open the file in an editor, and on macOS
-//! synthesise the preview shortcut so Zed flips the freshly-opened tab to its
-//! built-in SVG preview. Whether the keystroke fires is decided here, against
-//! the [`Opener`] variant — the "custom opener implies skip keystroke" invariant
-//! lives in one match instead of being split across two modules.
+//! synthesise the preview shortcut so Zed shows its built-in SVG preview.
+//! Whether keystrokes fire is decided here, against the [`Opener`] variant —
+//! the "custom opener implies skip keystroke" invariant lives in one match
+//! instead of being split across two modules.
+//!
+//! On macOS with the default opener and a parseable hotkey, the `AppleScript`
+//! path both opens the file and dispatches the keystrokes in a single
+//! transaction. The script polls `name of window 1` for the just-opened
+//! file's basename before sending any keystroke, eliminating the focus
+//! race where `zed <path>` returned before Zed had surfaced the new tab
+//! (which made `Cmd+Shift+V` land on whatever tab was previously active —
+//! typically the previously-opened preview).
+//!
+//! After the preview keystroke, two more keystrokes fire to clean up the
+//! redundant text-mode `.svg` tab: `Cmd+Shift+[` (Zed default
+//! `pane::ActivatePrevItem`) followed by `Cmd+W` (`pane::CloseActiveItem`).
+//! This relies on Zed opening the preview as a NEW tab to the right of the
+//! source `.svg` text tab in the SAME pane, so the immediately-previous tab
+//! in tab order IS the text-mode `.svg`. Corner cases where this assumption
+//! breaks:
+//!   - User remapped `pane::ActivatePrevItem` or `pane::CloseActiveItem` away
+//!     from `Cmd+Shift+[` / `Cmd+W` — the wrong tab may be focused and closed.
+//!   - Preview opens in a separate split pane (not Zed's default for SVG):
+//!     "previous item" navigates within the preview pane (which has only one
+//!     item) and `Cmd+W` would close the preview itself.
+//!   - User opened the same SVG previously, then activated some other tab
+//!     manually before re-running the task: the existing text-mode tab is
+//!     re-focused by `tell app "Zed" to open …`, but the "previous item"
+//!     after `Cmd+Shift+V` is still the prior tab in strip order — usually
+//!     still correct, but tab-strip order in edge cases is not guaranteed.
+//!
+//! In all of these the user can disable the auto-preview keystrokes with
+//! `SVG_REACT_PREVIEW_HOTKEY=none` to fall back to a plain `zed <path>` open.
 //!
 //! Hotkey parsing and the `AppleScript` orchestration are macOS-only; the rest
 //! is platform-agnostic.
@@ -17,10 +46,15 @@ use crate::config::{HotkeySpec, Opener};
 const DEFAULT_HOTKEY: &str = "cmd+shift+v";
 
 pub fn deliver(path: &Path, opener: &Opener, hotkey: &HotkeySpec) {
-    open_in_editor(path, opener);
-    if opener.synthesise_keystroke() {
-        trigger_preview(hotkey);
+    #[cfg(target_os = "macos")]
+    if opener.synthesise_keystroke()
+        && !matches!(hotkey, HotkeySpec::Disabled)
+        && macos::open_and_preview(path, hotkey)
+    {
+        return;
     }
+    // Unparseable hotkey or non-macOS or custom opener: just spawn the configured opener.
+    open_in_editor(path, opener);
 }
 
 fn open_in_editor(path: &Path, opener: &Opener) {
@@ -32,16 +66,6 @@ fn open_in_editor(path: &Path, opener: &Opener) {
             path.display()
         );
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn trigger_preview(_: &HotkeySpec) {
-    // Linux/Windows: user presses the preview shortcut manually (see README).
-}
-
-#[cfg(target_os = "macos")]
-fn trigger_preview(hotkey: &HotkeySpec) {
-    macos::trigger(hotkey);
 }
 
 struct Hotkey {
@@ -158,25 +182,44 @@ fn key_code_for(name: &str) -> Option<u8> {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use std::path::Path;
+
     use super::{DEFAULT_HOTKEY, Hotkey, HotkeySpec, parse};
 
     const OSASCRIPT_TIMEOUT_MS: &str = "3000";
 
+    // pane::ActivatePrevItem default chord = Cmd+Shift+[  (key code 33)
+    // pane::CloseActiveItem default chord  = Cmd+W        (key code 13)
+    const PREV_ITEM_KEY: u8 = 33;
+    const CLOSE_ITEM_KEY: u8 = 13;
+
+    // The script polls `name of window 1` for the just-opened file's basename
+    // before dispatching keystrokes. This replaces the old fixed `delay 0.2`
+    // and removes the residual focus-race on a cold-start Zed.
     const SCRIPT_TEMPLATE: &str = r#"
 on run argv
     set deadline to (current date) + ((item 1 of argv) as integer) / 1000
+    set svgPath to item 2 of argv
+    set svgBasename to item 3 of argv
+    tell application "Zed" to open POSIX file svgPath
     repeat while (current date) is less than deadline
         try
             tell application "System Events" to tell process "Zed"
                 if exists window 1 then
-                    set frontmost to true
-                    delay 0.2
-                    try
-                        key code __KEY_CODE__ __MODIFIERS__
-                        return "ok"
-                    on error number errNum
-                        return "denied:" & errNum
-                    end try
+                    if (name of window 1) contains svgBasename then
+                        set frontmost to true
+                        delay 0.05
+                        try
+                            key code __PREVIEW_KEY_CODE__ __PREVIEW_MODIFIERS__
+                            delay 0.15
+                            key code __PREV_ITEM__ using {command down, shift down}
+                            delay 0.05
+                            key code __CLOSE_ITEM__ using {command down}
+                            return "ok"
+                        on error number errNum
+                            return "denied:" & errNum
+                        end try
+                    end if
                 end if
             end tell
         end try
@@ -186,16 +229,21 @@ on run argv
 end run
 "#;
 
-    pub fn trigger(hotkey: &HotkeySpec) {
+    pub fn open_and_preview(path: &Path, hotkey: &HotkeySpec) -> bool {
         let Some(parsed) = resolve(hotkey) else {
-            return;
+            return false;
         };
+        let script = build_script(&parsed);
+        run_osascript(&script, path);
+        true
+    }
 
-        let script = SCRIPT_TEMPLATE
-            .replace("__KEY_CODE__", &parsed.key_code.to_string())
-            .replace("__MODIFIERS__", &parsed.applescript_clause());
-
-        run_osascript(&script);
+    fn build_script(preview: &Hotkey) -> String {
+        SCRIPT_TEMPLATE
+            .replace("__PREVIEW_KEY_CODE__", &preview.key_code.to_string())
+            .replace("__PREVIEW_MODIFIERS__", &preview.applescript_clause())
+            .replace("__PREV_ITEM__", &PREV_ITEM_KEY.to_string())
+            .replace("__CLOSE_ITEM__", &CLOSE_ITEM_KEY.to_string())
     }
 
     fn resolve(hotkey: &HotkeySpec) -> Option<Hotkey> {
@@ -221,12 +269,30 @@ end run
         resolve(hotkey)
     }
 
-    fn run_osascript(script: &str) {
+    #[cfg(test)]
+    pub(super) fn build_script_for_test(preview: &Hotkey) -> String {
+        build_script(preview)
+    }
+
+    fn run_osascript(script: &str, path: &Path) {
         use std::io::Write;
         use std::process::{Command, Stdio};
 
+        let Some(path_str) = path.to_str() else {
+            eprintln!(
+                "svg-react-preview: preview path contains non-UTF-8 bytes; \
+                 cannot pass to osascript: {}",
+                path.display()
+            );
+            return;
+        };
+        let basename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path_str);
+
         let Ok(mut child) = Command::new("osascript")
-            .args(["-", OSASCRIPT_TIMEOUT_MS])
+            .args(["-", OSASCRIPT_TIMEOUT_MS, path_str, basename])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -363,5 +429,41 @@ mod tests {
     #[test]
     fn resolve_custom_invalid_returns_none() {
         assert!(macos::resolve_for_test(&HotkeySpec::Custom("garbage".into())).is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rendered_script_opens_file_and_dispatches_preview_then_closes_text_tab() {
+        let preview = parse("cmd+shift+v").unwrap();
+        let script = macos::build_script_for_test(&preview);
+
+        // Opens the file via AppleScript so focus is guaranteed before the keystroke.
+        assert!(script.contains(r#"tell application "Zed" to open POSIX file svgPath"#));
+        // Active wait by window title — replaces the old fixed `delay 0.2`.
+        assert!(script.contains("(name of window 1) contains svgBasename"));
+        // Preview keystroke: Cmd+Shift+V → key code 9.
+        assert!(script.contains("key code 9 using {command down, shift down}"));
+        // Cmd+Shift+[ — activate previous item (the text-mode .svg).
+        assert!(script.contains("key code 33 using {command down, shift down}"));
+        // Cmd+W — close the now-active text-mode .svg tab.
+        assert!(script.contains("key code 13 using {command down}"));
+        // No leftover placeholders.
+        assert!(!script.contains("__PREVIEW_KEY_CODE__"));
+        assert!(!script.contains("__PREVIEW_MODIFIERS__"));
+        assert!(!script.contains("__PREV_ITEM__"));
+        assert!(!script.contains("__CLOSE_ITEM__"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rendered_script_handles_modifierless_preview_hotkey() {
+        let preview = parse("f5").unwrap();
+        let script = macos::build_script_for_test(&preview);
+
+        // Preview line: "key code 96 \n" (trailing space + newline, no `using` clause).
+        assert!(script.contains("key code 96 \n"));
+        // Close-tab chord still fires.
+        assert!(script.contains("key code 33 using {command down, shift down}"));
+        assert!(script.contains("key code 13 using {command down}"));
     }
 }
