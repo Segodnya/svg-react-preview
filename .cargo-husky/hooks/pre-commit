@@ -23,18 +23,53 @@ require() {
 require cargo-deny    "cargo install cargo-deny --locked"
 require cargo-machete "cargo install cargo-machete --locked"
 
-blue "[1/5] cargo fmt --check"
+LINUX_TARGET="x86_64-unknown-linux-gnu"
+
+blue "[1/6] cargo fmt --check"
 cargo fmt --all -- --check
 
-blue "[2/5] cargo clippy (pedantic, nursery)"
+blue "[2/6] cargo clippy (host, pedantic, nursery)"
 cargo clippy --all-targets --all-features -- \
     -D warnings -W clippy::pedantic -W clippy::nursery
 
-blue "[3/5] cargo test"
+yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+
+blue "[3/6] cargo clippy (linux target, cross-platform sanity)"
+if ! command -v rustup >/dev/null 2>&1; then
+    red "pre-commit: rustup not on PATH (Homebrew Rust ships only host target)"
+    red "  install: https://rustup.rs"
+    exit 1
+fi
+if ! rustup target list --installed | grep -q "^$LINUX_TARGET\$"; then
+    red "pre-commit: target $LINUX_TARGET not installed"
+    red "  install: rustup target add $LINUX_TARGET"
+    exit 1
+fi
+# Some deps (psm via swc_common) invoke cc-rs in build.rs and need a real
+# cross C-toolchain. Skip with a loud warning if it's missing — CI on
+# ubuntu-latest will still catch what we miss.
+if command -v x86_64-linux-gnu-gcc >/dev/null 2>&1; then
+    # Route through rustup-managed toolchain (Homebrew rustc has no linux rust-std).
+    # Isolate target dir so proc-macros compiled with host rustc don't poison the cache.
+    RUSTUP_BIN="$(dirname "$(rustup which cargo)")"
+    PATH="$RUSTUP_BIN:$PATH" \
+        CARGO_TARGET_DIR=target/cross-linux \
+        CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc \
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+        cargo clippy --all-targets --all-features --target "$LINUX_TARGET" -- \
+            -D warnings -W clippy::pedantic -W clippy::nursery
+else
+    yellow "pre-commit: skipping linux clippy — x86_64-linux-gnu-gcc missing"
+    yellow "  install (one-time): brew tap messense/macos-cross-toolchains && \\"
+    yellow "                     brew install x86_64-unknown-linux-gnu"
+    yellow "  CI will still catch non-macOS warnings on push."
+fi
+
+blue "[4/6] cargo test"
 cargo test --all-targets --all-features --locked
 
-blue "[4/5] cargo deny check"
+blue "[5/6] cargo deny check"
 cargo deny check
 
-blue "[5/5] cargo machete"
+blue "[6/6] cargo machete"
 cargo machete

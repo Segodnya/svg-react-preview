@@ -175,7 +175,9 @@ Issues and PRs are very welcome over at [github.com/Segodnya/svg-react-preview](
 
 ```bash
 make test            # run unit + integration + CLI tests
-make verify          # full pre-commit gate (fmt + clippy pedantic + test + deny + machete)
+make lint-pedantic   # clippy pedantic + nursery on host target
+make lint-cross      # clippy on x86_64-unknown-linux-gnu (catches non-macOS warnings)
+make verify          # full pre-commit gate (fmt + clippy host + clippy linux + test + deny + machete)
 make install         # install svg-react-preview into ~/.cargo/bin
 make help            # list all available targets
 ```
@@ -184,7 +186,19 @@ Previews are written to `$TMPDIR/svg-react-preview/<xxhash>.svg` (the file name 
 
 ### Toolchain
 
-`rust-toolchain.toml` pins **Rust 1.95.0** + components `clippy`, `rustfmt`, `llvm-tools-preview`. With `rustup` installed the right toolchain is selected automatically; on Homebrew Rust (no rustup) keep your local Rust at 1.95.x and the Makefile falls back to `/opt/homebrew/opt/llvm/bin/llvm-{cov,profdata}` for coverage (override via `LLVM_COV` / `LLVM_PROFDATA`).
+`rust-toolchain.toml` pins **Rust 1.95.0** + components `clippy`, `rustfmt`, `llvm-tools-preview`. `Cargo.toml` pins the same value as `package.rust-version` so `cargo msrv verify` passes. With `rustup` installed the right toolchain is selected automatically; on Homebrew Rust (no rustup) keep your local Rust at 1.95.x and the Makefile falls back to `/opt/homebrew/opt/llvm/bin/llvm-{cov,profdata}` for coverage (override via `LLVM_COV` / `LLVM_PROFDATA`).
+
+#### Cross-platform lint (macOS dev → Linux CI)
+
+CI runs `cargo clippy` on Linux, macOS, and Windows. macOS-only items behind `#[cfg(target_os = "macos")]` (`HotkeySpec::Custom`, `Opener::synthesise_keystroke`, the AppleScript module) are invisible to a host-only `make lint-pedantic` run on macOS — `make lint-cross` (and the pre-commit/pre-push hooks) catch them by re-checking against `x86_64-unknown-linux-gnu`. One-time setup:
+
+```bash
+rustup target add x86_64-unknown-linux-gnu
+brew tap messense/macos-cross-toolchains
+brew install x86_64-unknown-linux-gnu # provides x86_64-linux-gnu-gcc (~550 MB)
+```
+
+The cross check uses an isolated `CARGO_TARGET_DIR=target/cross-linux` to keep proc-macros compiled by Homebrew rustc out of the rustup-managed build's cache.
 
 ### Quality gates (CI)
 
@@ -223,10 +237,18 @@ rustup toolchain install nightly && cargo install --locked cargo-udeps
 
 Hooks are committed under `.cargo-husky/hooks/` and installed automatically by `cargo test` (the `cargo-husky` build script copies them into `.git/hooks/`). After a fresh clone run `cargo test` once.
 
-- **pre-commit** — `cargo fmt --check`, clippy pedantic+nursery, `cargo test`, `cargo deny check`, `cargo machete`.
-- **pre-push** — `make coverage-gate` (fails below 95% line coverage).
+- **pre-commit** —
+  1. `cargo fmt --check`
+  2. clippy pedantic+nursery (host)
+  3. clippy pedantic+nursery on `x86_64-unknown-linux-gnu` (skipped with a yellow warning if the cross C-toolchain is missing — see [Cross-platform lint](#cross-platform-lint-macos-dev--linux-ci))
+  4. `cargo test`
+  5. `cargo deny check`
+  6. `cargo machete`
+- **pre-push** —
+  1. clippy on `x86_64-unknown-linux-gnu` (same skip behaviour)
+  2. `make coverage-gate` (fails below 95% line coverage)
 
-Both hooks fail with an explicit "install X" hint when a tool is missing.
+Both hooks fail with an explicit "install X" hint when a required tool is missing.
 
 ### Test coverage
 

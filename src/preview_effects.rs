@@ -43,9 +43,12 @@ use std::process::Command;
 
 use crate::config::{HotkeySpec, Opener};
 
+#[cfg(target_os = "macos")]
 const DEFAULT_HOTKEY: &str = "cmd+shift+v";
 
 pub fn deliver(path: &Path, opener: &Opener, hotkey: &HotkeySpec) {
+    #[cfg(not(target_os = "macos"))]
+    let _ = hotkey;
     #[cfg(target_os = "macos")]
     if opener.synthesise_keystroke()
         && !matches!(hotkey, HotkeySpec::Disabled)
@@ -68,11 +71,13 @@ fn open_in_editor(path: &Path, opener: &Opener) {
     }
 }
 
+#[cfg(target_os = "macos")]
 struct Hotkey {
     modifiers: Vec<&'static str>,
     key_code: u8,
 }
 
+#[cfg(target_os = "macos")]
 impl Hotkey {
     fn applescript_clause(&self) -> String {
         if self.modifiers.is_empty() {
@@ -83,6 +88,7 @@ impl Hotkey {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn parse(spec: &str) -> Option<Hotkey> {
     let mut modifiers = Vec::new();
     let mut key_code: Option<u8> = None;
@@ -112,6 +118,7 @@ fn parse(spec: &str) -> Option<Hotkey> {
     })
 }
 
+#[cfg(target_os = "macos")]
 fn parse_modifier(token: &str) -> Option<&'static str> {
     match token {
         "cmd" | "command" => Some("command down"),
@@ -122,6 +129,7 @@ fn parse_modifier(token: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn key_code_for(name: &str) -> Option<u8> {
     Some(match name {
         "a" => 0,
@@ -328,7 +336,7 @@ end run
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
@@ -404,7 +412,6 @@ mod tests {
         assert_eq!(h.applescript_clause(), "");
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn resolve_default_returns_default_hotkey() {
         let h = macos::resolve_for_test(&HotkeySpec::Default).unwrap();
@@ -412,26 +419,22 @@ mod tests {
         assert_eq!(h.modifiers, ["command down", "shift down"]);
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn resolve_disabled_returns_none() {
         assert!(macos::resolve_for_test(&HotkeySpec::Disabled).is_none());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn resolve_custom_valid() {
         let h = macos::resolve_for_test(&HotkeySpec::Custom("f5".into())).unwrap();
         assert_eq!(h.key_code, 96);
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn resolve_custom_invalid_returns_none() {
         assert!(macos::resolve_for_test(&HotkeySpec::Custom("garbage".into())).is_none());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn rendered_script_opens_file_and_dispatches_preview_then_closes_text_tab() {
         let preview = parse("cmd+shift+v").unwrap();
@@ -454,7 +457,6 @@ mod tests {
         assert!(!script.contains("__CLOSE_ITEM__"));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn rendered_script_handles_modifierless_preview_hotkey() {
         let preview = parse("f5").unwrap();

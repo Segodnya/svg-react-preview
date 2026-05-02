@@ -1,4 +1,4 @@
-.PHONY: build release test check fmt fmt-check lint lint-pedantic clean install uninstall run example help \
+.PHONY: build release test check fmt fmt-check lint lint-pedantic lint-cross clean install uninstall run example help \
         coverage coverage-html coverage-gate verify deny machete audit udeps similarity geiger outdated msrv mutants
 
 # cargo-llvm-cov needs llvm-cov / llvm-profdata that match rustc's profile format.
@@ -53,6 +53,27 @@ lint:
 lint-pedantic:
 	cargo clippy --all-targets --all-features -- \
 		-D warnings -W clippy::pedantic -W clippy::nursery
+
+# Cross-platform clippy: lint the workspace as if it were built on Linux.
+# Catches non-macOS `dead_code` / `unused_variables` warnings that the host
+# toolchain can't see (e.g. items behind `#[cfg(target_os = "macos")]`).
+# Requires:
+#   * rustup (Homebrew Rust ships only the host target)
+#   * `rustup target add x86_64-unknown-linux-gnu`
+#   * `x86_64-linux-gnu-gcc` (e.g. brew tap messense/macos-cross-toolchains
+#     && brew install x86_64-unknown-linux-gnu) — needed by psm's build.rs.
+# Routes through rustup-managed cargo and uses an isolated CARGO_TARGET_DIR
+# so proc-macros built by Homebrew rustc don't poison the cache.
+lint-cross:
+	@command -v rustup >/dev/null 2>&1 || { echo "rustup not on PATH; install from https://rustup.rs"; exit 1; }
+	@rustup target list --installed | grep -q '^x86_64-unknown-linux-gnu$$' || { echo "missing target; run: rustup target add x86_64-unknown-linux-gnu"; exit 1; }
+	@command -v x86_64-linux-gnu-gcc >/dev/null 2>&1 || { echo "missing x86_64-linux-gnu-gcc; run: brew tap messense/macos-cross-toolchains && brew install x86_64-unknown-linux-gnu"; exit 1; }
+	PATH="$$(dirname $$(rustup which cargo)):$$PATH" \
+	    CARGO_TARGET_DIR=target/cross-linux \
+	    CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc \
+	    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+	    cargo clippy --all-targets --all-features --target x86_64-unknown-linux-gnu -- \
+	        -D warnings -W clippy::pedantic -W clippy::nursery
 
 # Remove build artifacts.
 clean:
@@ -128,7 +149,7 @@ mutants:
 	cargo mutants --in-place --no-shuffle --timeout 120
 
 # Pre-commit gate replicated locally — same set as `.cargo-husky/hooks/pre-commit`.
-verify: fmt-check lint-pedantic test deny machete
+verify: fmt-check lint-pedantic lint-cross test deny machete
 
 # List available targets.
 help:

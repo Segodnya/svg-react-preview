@@ -2,6 +2,7 @@
 name = "svg-react-preview"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95"
 description = "Preview inline JSX/TSX SVG fragments in Zed"
 repository = "https://github.com/Segodnya/svg-react-preview"
 license = "MIT"

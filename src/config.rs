@@ -44,6 +44,7 @@ impl Opener {
         }
     }
 
+    #[cfg(target_os = "macos")]
     pub const fn synthesise_keystroke(&self) -> bool {
         matches!(self, Self::Default)
     }
@@ -52,6 +53,7 @@ impl Opener {
 pub enum HotkeySpec {
     Default,
     Disabled,
+    #[cfg(target_os = "macos")]
     Custom(String),
 }
 
@@ -99,7 +101,10 @@ fn hotkey_from_env() -> HotkeySpec {
     match non_empty_env(ENV_HOTKEY) {
         None => HotkeySpec::Default,
         Some(s) if s.eq_ignore_ascii_case("none") => HotkeySpec::Disabled,
+        #[cfg(target_os = "macos")]
         Some(s) => HotkeySpec::Custom(s),
+        #[cfg(not(target_os = "macos"))]
+        Some(_) => HotkeySpec::Default,
     }
 }
 
@@ -111,6 +116,7 @@ fn non_empty_env(key: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn opener_default_synthesises_keystroke() {
         let o = Opener::Default;
@@ -118,10 +124,21 @@ mod tests {
         assert!(o.synthesise_keystroke());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn opener_custom_skips_keystroke() {
         let o = Opener::Custom("true".into());
         assert_eq!(o.command(), "true");
         assert!(!o.synthesise_keystroke());
+    }
+
+    #[test]
+    fn opener_default_command_is_zed() {
+        assert_eq!(Opener::Default.command(), "zed");
+    }
+
+    #[test]
+    fn opener_custom_command_passes_through() {
+        assert_eq!(Opener::Custom("true".into()).command(), "true");
     }
 }
