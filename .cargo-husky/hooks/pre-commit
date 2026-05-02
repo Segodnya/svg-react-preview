@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Installed by cargo-husky. Runs before every `git commit`.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Some GUIs and `git` invocations launched outside an interactive shell don't
+# inherit `~/.cargo/bin`; surface it here so installed cargo subcommands resolve.
+export PATH="$HOME/.cargo/bin:$PATH"
+
+red()  { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+blue() { printf '\033[34m%s\033[0m\n' "$*"; }
+
+require() {
+    local bin="$1" install_hint="$2"
+    if ! command -v "$bin" >/dev/null 2>&1; then
+        red "pre-commit: '$bin' not found on PATH"
+        red "  install:  $install_hint"
+        exit 1
+    fi
+}
+
+require cargo-deny    "cargo install cargo-deny --locked"
+require cargo-machete "cargo install cargo-machete --locked"
+
+blue "[1/5] cargo fmt --check"
+cargo fmt --all -- --check
+
+blue "[2/5] cargo clippy (pedantic, nursery)"
+cargo clippy --all-targets --all-features -- \
+    -D warnings -W clippy::pedantic -W clippy::nursery
+
+blue "[3/5] cargo test"
+cargo test --all-targets --all-features --locked
+
+blue "[4/5] cargo deny check"
+cargo deny check
+
+blue "[5/5] cargo machete"
+cargo machete

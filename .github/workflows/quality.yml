@@ -1,0 +1,92 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  unused-deps-stable:
+    name: cargo-machete (unused deps, stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bnjbvr/cargo-machete@main
+
+  unused-deps-nightly:
+    name: cargo-udeps (unused deps, nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-udeps
+      - run: cargo +nightly udeps --all-targets --all-features --locked
+
+  duplicates:
+    name: similarity-rs (duplicate code)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: similarity-rs
+      - run: similarity-rs --threshold 0.85 --min-lines 5 src
+
+  unsafe-stats:
+    name: cargo-geiger (unsafe stats)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-geiger
+      - run: cargo geiger --all-features --locked --forbid-only
+
+  outdated:
+    name: cargo-outdated
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-outdated
+      - run: cargo outdated --workspace --exit-code 1
+
+  msrv:
+    name: cargo-msrv (verify MSRV)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-msrv
+      - run: cargo msrv verify
+
+  mutants:
+    name: cargo-mutants (mutation testing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      - run: cargo mutants --in-place --no-shuffle --timeout 120

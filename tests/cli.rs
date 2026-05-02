@@ -65,7 +65,7 @@ fn missing_opener_prints_path_fallback() {
             "SVG_REACT_PREVIEW_OPENER",
             "definitely-not-a-real-binary-xyz",
         )
-        .write_stdin(r#"<svg><path/></svg>"#)
+        .write_stdin(r"<svg><path/></svg>")
         .assert()
         .success()
         .stderr(predicate::str::contains("not found in PATH"));
@@ -111,7 +111,36 @@ fn empty_env_var_falls_through_to_stdin() {
     // Empty SVG_REACT_PREVIEW_INPUT should be treated as unset.
     cli()
         .env("SVG_REACT_PREVIEW_INPUT", "")
-        .write_stdin(r#"<svg><path/></svg>"#)
+        .write_stdin(r"<svg><path/></svg>")
         .assert()
         .success();
+}
+
+#[test]
+fn writes_svg_file_to_temp_dir() {
+    // Confirms that `write_temp` actually writes the rendered SVG to disk —
+    // a no-op `Ok(Default::default())` mutation would leave the dir empty.
+    let tmp = tempfile::tempdir().unwrap();
+    cli()
+        .env("TMPDIR", tmp.path())
+        .write_stdin(r#"<svg><path d="M0 0"/></svg>"#)
+        .assert()
+        .success();
+
+    let dir = tmp.path().join("svg-react-preview");
+    let entries: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("expected {dir:?} to exist: {e}"))
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "expected exactly one .svg file in {dir:?}"
+    );
+
+    let path = entries[0].path();
+    assert_eq!(path.extension().and_then(|s| s.to_str()), Some("svg"));
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("<svg"), "got: {content}");
+    assert!(content.contains("<path"), "got: {content}");
 }

@@ -15,7 +15,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("svg-react-preview: {}", e);
+            eprintln!("svg-react-preview: {e}");
             ExitCode::FAILURE
         }
     }
@@ -26,7 +26,7 @@ fn run() -> Result<()> {
     let result = transform::to_svg(&expr)?;
 
     for w in &result.warnings {
-        eprintln!("svg-react-preview: warn: {}", w);
+        eprintln!("svg-react-preview: warn: {w}");
     }
 
     let xml = serialize::to_xml(&result.root);
@@ -43,8 +43,7 @@ fn select_source() -> Result<Source> {
     let col = non_empty_env("SVG_REACT_PREVIEW_COLUMN").and_then(|s| s.parse::<usize>().ok());
 
     if let (Some(path), Some(row), Some(col)) = (file, row, col) {
-        let source =
-            fs::read_to_string(&path).map_err(|e| anyhow!("cannot read {}: {}", path, e))?;
+        let source = fs::read_to_string(&path).map_err(|e| anyhow!("cannot read {path}: {e}"))?;
         return Ok(Source::Cursor {
             source,
             path,

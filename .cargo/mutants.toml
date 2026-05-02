@@ -1,0 +1,21 @@
+# cargo-mutants configuration. See https://mutants.rs/mutants-toml.html
+
+# Equivalent mutations the test suite cannot kill — exclude by name pattern.
+# `exclude_re` is matched against the mutant's full descriptive name (substring
+# match, regex semantics).
+exclude_re = [
+    # `is_none_or(|(s, _)| size < *s)` in `SvgFinder::visit_jsx_element`:
+    # replacing `<` with `<=` only changes behaviour when two SVGs have the
+    # *same* span size. For nested SVGs (the only case where two elements both
+    # contain the cursor) the inner is strictly smaller — so the mutation is
+    # observationally equivalent in the input domain.
+    "expand_selection.rs:92.*replace < with <=",
+
+    # `size = hi - lo` in `SvgFinder::visit_jsx_element`: replacing `-` with
+    # `/` cannot flip the inner-vs-outer ordering for nested SVGs, because
+    # `outer.hi / outer.lo` is always >= `inner.hi / inner.lo` whenever
+    # `outer.lo <= inner.lo` and `outer.hi >= inner.hi` (which proper nesting
+    # guarantees). Equivalent in the input domain. The `+` variant is killed
+    # by `picks_innermost_when_outer_span_padded`.
+    "expand_selection.rs:84.*replace - with /",
+]

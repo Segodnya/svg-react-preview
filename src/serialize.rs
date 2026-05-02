@@ -1,5 +1,6 @@
 use crate::transform::SvgNode;
 
+#[must_use]
 pub fn to_xml(node: &SvgNode) -> String {
     let mut out = String::with_capacity(256);
     write_node(node, &mut out);
@@ -114,6 +115,20 @@ mod tests {
     fn escapes_text_content() {
         let n = elem("text", &[], vec![SvgNode::Text("a&b<c>d".into())]);
         assert_eq!(to_xml(&n), "<text>a&amp;b&lt;c&gt;d</text>");
+    }
+
+    #[test]
+    fn quote_in_text_is_not_escaped() {
+        // `"` only needs escaping inside attribute values; in text content it is literal.
+        let n = elem("text", &[], vec![SvgNode::Text(r#"a"b"#.into())]);
+        assert_eq!(to_xml(&n), r#"<text>a"b</text>"#);
+    }
+
+    #[test]
+    fn gt_in_attr_is_not_escaped() {
+        // `>` is escaped only in text content; inside attribute values it is left literal.
+        let n = elem("g", &[("title", "a>b")], vec![]);
+        assert_eq!(to_xml(&n), r#"<g title="a>b"></g>"#);
     }
 
     #[test]

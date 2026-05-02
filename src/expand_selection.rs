@@ -8,9 +8,14 @@ use crate::parse::{make_source_file, tsx_syntax};
 
 /// Returns the innermost `<svg>` element enclosing (row, col) as a parsed AST node.
 /// `row` and `col` are 1-based, matching Zed's `${ZED_ROW}` / `${ZED_COLUMN}`.
+///
+/// # Errors
+/// - row/col is `0` or points past the end of the file
+/// - the file is not parseable as TSX
+/// - no `<svg>` element encloses the cursor position
 pub fn find_svg_at(source: &str, row: usize, col: usize) -> Result<Box<JSXElement>> {
     let offset = row_col_to_offset(source, row, col)
-        .ok_or_else(|| anyhow!("cursor position {}:{} is past end of file", row, col))?;
+        .ok_or_else(|| anyhow!("cursor position {row}:{col} is past end of file"))?;
 
     let (_cm, fm) = make_source_file(source);
     let mut recovered = Vec::new();
@@ -29,7 +34,7 @@ pub fn find_svg_at(source: &str, row: usize, col: usize) -> Result<Box<JSXElemen
     finder
         .hit
         .map(|(_, el)| el)
-        .ok_or_else(|| anyhow!("cursor at {}:{} is not inside an <svg> element", row, col))
+        .ok_or_else(|| anyhow!("cursor at {row}:{col} is not inside an <svg> element"))
 }
 
 /// Converts 1-based (row, col) into a byte offset, counting columns in Unicode characters.
@@ -58,9 +63,8 @@ fn row_col_to_offset(source: &str, row: usize, col: usize) -> Option<usize> {
     let mut byte_in_line = 0usize;
     for _ in 0..(col - 1) {
         match iter.next() {
-            Some((_, '\n')) => return None,
+            Some((_, '\n')) | None => return None,
             Some((i, c)) => byte_in_line = i + c.len_utf8(),
-            None => return None,
         }
     }
     Some(line_start + byte_in_line)
@@ -109,9 +113,9 @@ mod tests {
         let before = &src_with_marker[..idx];
         let after = &src_with_marker[idx + 1..];
         let row = before.bytes().filter(|b| *b == b'\n').count() + 1;
-        let last_nl = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let last_nl = before.rfind('\n').map_or(0, |i| i + 1);
         let col = before[last_nl..].chars().count() + 1;
-        let src = format!("{}{}", before, after);
+        let src = format!("{before}{after}");
 
         let element = find_svg_at(&src, row, col)?;
         let expr = Expr::JSXElement(element);
@@ -244,5 +248,40 @@ mod tests {
     fn col_past_eof_without_newline_is_invalid() {
         let err = find_svg_at("x", 1, 100).unwrap_err().to_string();
         assert!(err.contains("past end of file"), "got: {err}");
+    }
+
+    #[test]
+    fn col_one_walks_zero_chars() {
+        // col=1 must walk 0 characters along the line, leaving the cursor on the
+        // first byte. Mutations on `(col - 1)` (`+`, `/`) would advance the cursor
+        // past the leading space and into the SVG span — falsely matching.
+        let err = find_svg_at(" <svg/>", 1, 1).unwrap_err().to_string();
+        assert!(err.contains("not inside an <svg>"), "got: {err}");
+    }
+
+    #[test]
+    fn target_at_closing_boundary_is_outside_svg() {
+        // The interval is [lo, hi): a cursor at exactly `hi` is one past the end and
+        // must NOT match. With `<` mutated to `<=`, the cursor would falsely match.
+        // `<svg/>;` — col=7 lands on the `;`, immediately after `</svg>`.
+        let err = find_svg_at("<svg/>;", 1, 7).unwrap_err().to_string();
+        assert!(err.contains("not inside an <svg>"), "got: {err}");
+    }
+
+    #[test]
+    fn picks_innermost_when_outer_span_padded() {
+        // Padded outer `<svg attr="…">…</svg>` — outer.lo+outer.hi can become smaller
+        // than inner.lo+inner.hi, so a `hi - lo` → `hi + lo` (or `hi / lo`) mutation
+        // on the span size would let the OUTER win the narrower-hit comparison.
+        let src = r#"<svg attr="aaaaaaaaaaaaaaaa"><svg/></svg>"#;
+        // Cursor inside the inner self-closing `<svg/>`.
+        let inner_lo = src.find("><svg/>").unwrap() + 1;
+        let col = src[..inner_lo].chars().count() + 2; // position inside `<svg/>`
+        let element = find_svg_at(src, 1, col).expect("inner svg must be found");
+        assert!(
+            element.children.is_empty(),
+            "expected inner svg with no children, got {} children",
+            element.children.len()
+        );
     }
 }

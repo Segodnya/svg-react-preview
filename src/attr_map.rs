@@ -86,6 +86,7 @@ const KEEP_CAMEL: &[&str] = &[
     "zoomAndPan",
 ];
 
+#[must_use]
 pub fn map_attr(name: &str) -> AttrAction {
     if is_event_handler(name) {
         return AttrAction::Drop;
@@ -121,6 +122,7 @@ pub fn map_attr(name: &str) -> AttrAction {
 
 /// Inserts `-` before each uppercase ASCII letter, then lowercases.
 /// `strokeWidth` → `stroke-width`, `accentHeight` → `accent-height`.
+#[must_use]
 pub fn camel_to_kebab(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
     for (i, c) in s.char_indices() {
@@ -152,6 +154,13 @@ mod tests {
         );
         assert_eq!(camel_to_kebab("vAlphabetic"), "v-alphabetic");
         assert_eq!(camel_to_kebab("xHeight"), "x-height");
+    }
+
+    #[test]
+    fn kebab_uppercase_first_no_leading_dash() {
+        // The `i > 0` guard must NOT fire on i == 0; "Stroke" should not become "-stroke".
+        assert_eq!(camel_to_kebab("Stroke"), "stroke");
+        assert_eq!(camel_to_kebab("XHeight"), "x-height");
     }
 
     #[test]

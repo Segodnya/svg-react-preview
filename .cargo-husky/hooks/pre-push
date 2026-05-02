@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Installed by cargo-husky. Runs before every `git push`.
+# Runs the heavy coverage gate that pre-commit skips.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Some GUIs and `git` invocations launched outside an interactive shell don't
+# inherit `~/.cargo/bin`; surface it here so installed cargo subcommands resolve.
+export PATH="$HOME/.cargo/bin:$PATH"
+
+red()  { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+blue() { printf '\033[34m%s\033[0m\n' "$*"; }
+
+if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+    red "pre-push: 'cargo-llvm-cov' not found on PATH"
+    red "  install:  cargo install cargo-llvm-cov --locked"
+    exit 1
+fi
+
+blue "[pre-push] cargo llvm-cov (gate >=95%)"
+# Делегирует Makefile, чтобы он сам разобрался с rustup vs Homebrew LLVM.
+make coverage-gate

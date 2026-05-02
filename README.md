@@ -80,15 +80,60 @@ Precedence: `SVG_REACT_PREVIEW_FILE`+`ROW`+`COLUMN` → `SVG_REACT_PREVIEW_INPUT
 
 ```bash
 make test            # run unit + integration + CLI tests
+make verify          # full pre-commit gate (fmt + clippy pedantic + test + deny + machete)
 make install         # install svg-react-preview into ~/.cargo/bin
 make help            # list all available targets
 ```
 
 Previews are written to `$TMPDIR/svg-react-preview/<xxhash>.svg` (the file name is a stable hash of the source — re-opening the same fragment doesn't create new files).
 
-### Test coverage
+### Toolchain
 
-Requires `cargo install cargo-llvm-cov` once. On Homebrew Rust (no rustup) the Makefile points at `/opt/homebrew/opt/llvm/bin/llvm-cov*` automatically — override `LLVM_COV` / `LLVM_PROFDATA` if your toolchain differs.
+`rust-toolchain.toml` pins **Rust 1.95.0** + components `clippy`, `rustfmt`, `llvm-tools-preview`. With `rustup` installed the right toolchain is selected automatically; on Homebrew Rust (no rustup) keep your local Rust at 1.95.x and the Makefile falls back to `/opt/homebrew/opt/llvm/bin/llvm-{cov,profdata}` for coverage (override via `LLVM_COV` / `LLVM_PROFDATA`).
+
+### Quality gates (CI)
+
+The `.github/workflows/` set runs on every push to `main` and every PR targeting `main`:
+
+- **`ci.yml`** — Linux, macOS, Windows
+  - `cargo fmt --check`
+  - `cargo clippy` (pedantic + nursery, `-D warnings`)
+  - `cargo test`
+  - `cargo build --release`
+  - `cargo doc` (`-D warnings`)
+- **`coverage.yml`**
+  - `cargo llvm-cov` → Codecov
+  - fails if line coverage < 95%
+- **`security.yml`**
+  - `cargo deny check all` (advisories + bans + licenses + sources)
+  - `cargo audit` (RustSec)
+- **`quality.yml`**
+  - `cargo machete` (unused deps, stable)
+  - `cargo udeps` (unused deps, nightly)
+  - `similarity-rs` (duplicate code)
+  - `cargo geiger --forbid-only` (unsafe stats)
+  - `cargo outdated` (newer dependency versions)
+  - `cargo msrv verify` (pinned MSRV still compiles)
+  - `cargo mutants` (mutation testing)
+
+All jobs are blocking. To reproduce locally install the tools once:
+
+```bash
+cargo install --locked cargo-deny cargo-machete cargo-llvm-cov cargo-mutants cargo-audit \
+              cargo-geiger cargo-outdated cargo-msrv similarity-rs
+rustup toolchain install nightly && cargo install --locked cargo-udeps
+```
+
+### Pre-commit / pre-push hooks (cargo-husky)
+
+Hooks are committed under `.cargo-husky/hooks/` and installed automatically by `cargo test` (the `cargo-husky` build script copies them into `.git/hooks/`). After a fresh clone run `cargo test` once.
+
+- **pre-commit** — `cargo fmt --check`, clippy pedantic+nursery, `cargo test`, `cargo deny check`, `cargo machete`.
+- **pre-push** — `make coverage-gate` (fails below 95% line coverage).
+
+Both hooks fail with an explicit "install X" hint when a tool is missing.
+
+### Test coverage
 
 ```bash
 make coverage        # per-file summary + uncovered line numbers

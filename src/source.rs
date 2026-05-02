@@ -4,9 +4,11 @@ use swc_ecma_ast::Expr;
 use crate::expand_selection::find_svg_at;
 use crate::parse::parse_jsx;
 
-/// One of the input modes documented in the README. Hides the asymmetry between
-/// "parse a free-standing TSX expression" and "find the innermost `<svg>` enclosing
-/// a cursor position in a full TSX file" behind a single `into_expr` operation.
+/// One of the input modes documented in the README.
+///
+/// Hides the asymmetry between "parse a free-standing TSX expression" and "find
+/// the innermost `<svg>` enclosing a cursor position in a full TSX file" behind
+/// a single `into_expr` operation.
 pub enum Source {
     /// A free-standing TSX expression (e.g. piped via stdin or `$SVG_REACT_PREVIEW_INPUT`).
     Fragment(String),
@@ -21,9 +23,15 @@ pub enum Source {
 }
 
 impl Source {
+    /// Resolves the source into a parsed JSX expression.
+    ///
+    /// # Errors
+    /// - `Fragment` errors if the input is empty or fails to parse as TSX.
+    /// - `Cursor` errors if the file is not parseable, the row/column is past
+    ///   end-of-file, or no `<svg>` element encloses the cursor.
     pub fn into_expr(self) -> Result<Box<Expr>> {
         match self {
-            Source::Fragment(s) => {
+            Self::Fragment(s) => {
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
                     return Err(anyhow!(
@@ -32,14 +40,14 @@ impl Source {
                 }
                 parse_jsx(trimmed)
             }
-            Source::Cursor {
+            Self::Cursor {
                 source,
                 path,
                 row,
                 col,
             } => {
                 let element = find_svg_at(&source, row, col)
-                    .map_err(|e| anyhow!("{} [{}:{}:{}]", e, path, row, col))?;
+                    .map_err(|e| anyhow!("{e} [{path}:{row}:{col}]"))?;
                 Ok(Box::new(Expr::JSXElement(element)))
             }
         }

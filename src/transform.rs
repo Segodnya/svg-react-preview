@@ -12,7 +12,7 @@ pub enum SvgNode {
     Element {
         name: String,
         attrs: Vec<(String, String)>,
-        children: Vec<SvgNode>,
+        children: Vec<Self>,
     },
     Text(String),
     Comment(String),
@@ -29,6 +29,11 @@ struct Ctx {
     has_xlink: bool,
 }
 
+/// Lowers a JSX expression into the internal `SvgNode` tree.
+///
+/// # Errors
+/// Returns an error when the expression contains no JSX elements (e.g. a bare
+/// numeric or string literal).
 pub fn to_svg(expr: &Expr) -> Result<TransformResult> {
     let mut ctx = Ctx::default();
     let nodes = walk_expr(expr, &mut ctx);
@@ -46,8 +51,8 @@ fn walk_expr(expr: &Expr, ctx: &mut Ctx) -> Vec<SvgNode> {
     match narrow_to_static_branch(expr) {
         Expr::JSXElement(el) => vec![transform_element(el, ctx)],
         Expr::JSXFragment(frag) => transform_children(&frag.children, ctx),
-        // Defensive — swc's `parse_file_as_expr` does not surface `Expr::JSXEmpty` at the top level.
-        Expr::JSXEmpty(_) => Vec::new(),
+        // Anything else (including the defensive `Expr::JSXEmpty`, which swc's
+        // `parse_file_as_expr` does not surface at the top level).
         _ => Vec::new(),
     }
 }
@@ -84,7 +89,7 @@ fn transform_element(el: &JSXElement, ctx: &mut Ctx) -> SvgNode {
 
     if !is_lowercase_tag(&name) {
         ctx.warnings
-            .push(format!("unresolved <{}/> rendered as placeholder", name));
+            .push(format!("unresolved <{name}/> rendered as placeholder"));
         return placeholder();
     }
 
@@ -153,16 +158,16 @@ fn process_attr(attr: &JSXAttr, ctx: &mut Ctx) -> Option<(String, String)> {
     };
 
     let value = match &attr.value {
-        None => return None,
         Some(JSXAttrValue::Str(s)) => s.value.to_atom_lossy().to_string(),
         Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
             // Defensive — swc rejects `attr={}` / `attr={/* */}` at parse time (TS1109).
             JSXExpr::JSXEmptyExpr(_) => return None,
             JSXExpr::Expr(e) => resolve_expr_value(e, &raw)?,
         },
-        // Defensive — bare-element attribute values (`attr=<x/>`) require an experimental
-        // JSX dialect that swc does not parse; values always arrive wrapped in `{}`.
-        Some(JSXAttrValue::JSXElement(_)) | Some(JSXAttrValue::JSXFragment(_)) => return None,
+        // `None` covers boolean attrs (`attr` without value).
+        // `JSXElement`/`JSXFragment` cover `attr=<x/>` — an experimental JSX dialect
+        // swc does not parse; values always arrive wrapped in `{}`.
+        None | Some(JSXAttrValue::JSXElement(_) | JSXAttrValue::JSXFragment(_)) => return None,
     };
 
     Some((target, value))
@@ -171,34 +176,30 @@ fn process_attr(attr: &JSXAttr, ctx: &mut Ctx) -> Option<(String, String)> {
 fn resolve_expr_value(e: &Expr, attr_camel: &str) -> Option<String> {
     match narrow_to_static_branch(e) {
         Expr::Lit(Lit::Str(s)) => Some(s.value.to_atom_lossy().to_string()),
-        Expr::Lit(Lit::Num(n)) => Some(format_number(n.value)),
+        // f64::to_string already prints integer values without a trailing ".0",
+        // so no separate integer cast is needed.
+        Expr::Lit(Lit::Num(n)) => Some(n.value.to_string()),
         Expr::Lit(Lit::Bool(b)) => Some(b.value.to_string()),
         Expr::Tpl(t) if t.exprs.is_empty() => {
+            // `cooked` is `None` only on malformed escapes that the parser already
+            // rejects, so the `q.raw` branch is unreachable in practice — keep it
+            // as a defensive fallback rather than a panic.
             let s: String = t
                 .quasis
                 .iter()
-                .map(|q| match &q.cooked {
-                    Some(c) => c.to_atom_lossy().to_string(),
-                    // Defensive — `cooked` is `None` only on malformed escapes that the parser
-                    // already rejects, so this fallback is unreachable in practice.
-                    None => q.raw.to_string(),
+                .map(|q| {
+                    q.cooked
+                        .as_ref()
+                        .map_or_else(|| q.raw.to_string(), |c| c.to_atom_lossy().to_string())
                 })
                 .collect();
             Some(s)
         }
         Expr::Unary(u) if matches!(u.op, UnaryOp::Minus) => {
-            resolve_expr_value(&u.arg, attr_camel).map(|s| format!("-{}", s))
+            resolve_expr_value(&u.arg, attr_camel).map(|s| format!("-{s}"))
         }
         // Identifiers and member access are unresolvable — fall back by attribute name.
-        _ => fallback_for(attr_camel).map(|s| s.to_string()),
-    }
-}
-
-fn format_number(n: f64) -> String {
-    if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e16 {
-        format!("{}", n as i64)
-    } else {
-        n.to_string()
+        _ => fallback_for(attr_camel).map(ToString::to_string),
     }
 }
 
@@ -391,6 +392,31 @@ mod tests {
     fn attr_logical_and_resolved_to_rhs() {
         let (out, _) = render(r#"<svg fill={x && "red"}/>"#);
         assert!(out.contains(r#"fill="red""#), "got: {out}");
+    }
+
+    #[test]
+    fn attr_logical_or_falls_back_not_narrowed() {
+        // Only `&&` narrows to RHS; `||` leaves the expression unresolved → fallback.
+        let (out, _) = render(r#"<svg fill={x || "red"}/>"#);
+        assert!(out.contains(r#"fill="currentColor""#), "got: {out}");
+        assert!(!out.contains(r#"fill="red""#), "got: {out}");
+    }
+
+    #[test]
+    fn attr_template_with_exprs_falls_back() {
+        // Template literals with interpolation are NOT statically resolvable → fallback.
+        let (out, _) = render(r"<svg fill={`a${x}b`}/>");
+        assert!(out.contains(r#"fill="currentColor""#), "got: {out}");
+        // Must not have produced a literal join "ab".
+        assert!(!out.contains(r#"fill="ab""#), "got: {out}");
+    }
+
+    #[test]
+    fn attr_unary_plus_falls_back_not_negated() {
+        // Only `UnaryOp::Minus` triggers numeric negation. Unary `+5` falls through
+        // to the fallback (which is None for `x`), so the attribute is dropped.
+        let (out, _) = render("<svg x={+5}/>");
+        assert!(!out.contains("x="), "got: {out}");
     }
 
     #[test]

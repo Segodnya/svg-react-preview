@@ -1,9 +1,22 @@
-.PHONY: build test check fmt fmt-check lint clean install uninstall run example help coverage coverage-html coverage-gate
+.PHONY: build release test check fmt fmt-check lint lint-pedantic clean install uninstall run example help \
+        coverage coverage-html coverage-gate verify deny machete audit udeps similarity geiger outdated msrv mutants
 
-# Homebrew Rust ships without rustup, so cargo-llvm-cov needs paths to system LLVM tools.
-LLVM_COV      ?= /opt/homebrew/opt/llvm/bin/llvm-cov
-LLVM_PROFDATA ?= /opt/homebrew/opt/llvm/bin/llvm-profdata
-COVERAGE_ENV   = LLVM_COV=$(LLVM_COV) LLVM_PROFDATA=$(LLVM_PROFDATA)
+# cargo-llvm-cov needs llvm-cov / llvm-profdata that match rustc's profile format.
+# Resolution order:
+#   1. caller-supplied LLVM_COV / LLVM_PROFDATA (highest priority)
+#   2. rustup's `llvm-tools-preview` component (only if found via the active toolchain)
+#   3. Homebrew LLVM at /opt/homebrew/opt/llvm/bin (last-ditch fallback)
+# A bare `cargo llvm-cov` is unreliable when both Homebrew Rust and rustup are
+# installed: PATH may surface Homebrew's rustc whose sysroot lacks llvm-tools.
+RUSTUP_LLVM_BIN := $(shell find $(HOME)/.rustup/toolchains -maxdepth 5 -name llvm-cov -path '*lib/rustlib*' 2>/dev/null | head -1 | xargs -I{} dirname {})
+ifneq ($(RUSTUP_LLVM_BIN),)
+    LLVM_COV      ?= $(RUSTUP_LLVM_BIN)/llvm-cov
+    LLVM_PROFDATA ?= $(RUSTUP_LLVM_BIN)/llvm-profdata
+else
+    LLVM_COV      ?= /opt/homebrew/opt/llvm/bin/llvm-cov
+    LLVM_PROFDATA ?= /opt/homebrew/opt/llvm/bin/llvm-profdata
+endif
+COVERAGE_ENV = LLVM_COV=$(LLVM_COV) LLVM_PROFDATA=$(LLVM_PROFDATA)
 
 # Minimum line coverage enforced by `make coverage-gate`. Bump as the suite grows.
 COVERAGE_MIN  ?= 95
@@ -34,7 +47,12 @@ fmt-check:
 
 # Run clippy with warnings promoted to errors.
 lint:
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings
+
+# Run clippy with pedantic + nursery groups (matches CI).
+lint-pedantic:
+	cargo clippy --all-targets --all-features -- \
+		-D warnings -W clippy::pedantic -W clippy::nursery
 
 # Remove build artifacts.
 clean:
@@ -69,6 +87,48 @@ coverage-html:
 # CI gate: fail if line coverage drops below COVERAGE_MIN (default: 95%).
 coverage-gate:
 	$(COVERAGE_ENV) cargo llvm-cov --summary-only --fail-under-lines $(COVERAGE_MIN)
+
+# --- Quality / security tooling -------------------------------------------------
+# All of these mirror the corresponding CI job; install hints are in the README.
+
+# cargo-deny: advisories + bans + licenses + sources.
+deny:
+	cargo deny check
+
+# cargo-audit: RustSec advisories (subset of deny, kept for parity with CI).
+audit:
+	cargo audit
+
+# cargo-machete: unused dependencies (stable).
+machete:
+	cargo machete
+
+# cargo-udeps: unused dependencies (nightly, more accurate).
+udeps:
+	cargo +nightly udeps --all-targets --all-features --locked
+
+# similarity-rs: copy-paste detector for Rust source.
+similarity:
+	similarity-rs --threshold 0.85 --min-lines 5 src
+
+# cargo-geiger: count unsafe usage (forbid-only mode).
+geiger:
+	cargo geiger --all-features --locked --forbid-only
+
+# cargo-outdated: dependencies with newer versions available.
+outdated:
+	cargo outdated --workspace --exit-code 1
+
+# cargo-msrv: verify that the pinned MSRV still compiles.
+msrv:
+	cargo msrv verify
+
+# cargo-mutants: mutation testing.
+mutants:
+	cargo mutants --in-place --no-shuffle --timeout 120
+
+# Pre-commit gate replicated locally — same set as `.cargo-husky/hooks/pre-commit`.
+verify: fmt-check lint-pedantic test deny machete
 
 # List available targets.
 help:

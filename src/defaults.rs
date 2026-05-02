@@ -10,6 +10,7 @@ pub const XMLNS_XLINK: &str = "http://www.w3.org/1999/xlink";
 
 /// Returns a fallback value for a JSX attribute name (camelCase) or its SVG
 /// equivalent (kebab-case), or `None` if no fallback is defined.
+#[must_use]
 pub fn fallback_for(attr: &str) -> Option<&'static str> {
     match attr {
         "size" | "width" | "height" => Some(SIZE),

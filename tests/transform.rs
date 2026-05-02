@@ -8,7 +8,7 @@ fn render(tsx: &str) -> (String, Vec<String>) {
 
 fn assert_golden(name: &str, tsx: &str, want: &str) {
     let (got, _) = render(tsx);
-    assert_eq!(got.trim_end(), want.trim_end(), "fixture {} mismatch", name);
+    assert_eq!(got.trim_end(), want.trim_end(), "fixture {name} mismatch");
 }
 
 #[test]
@@ -47,8 +47,7 @@ fn pascal_case_emits_placeholder_with_warning() {
     );
     assert!(
         warnings.iter().any(|w| w.contains("Icon")),
-        "expected unresolved <Icon/> warning, got {:?}",
-        warnings
+        "expected unresolved <Icon/> warning, got {warnings:?}"
     );
 }
 
@@ -108,8 +107,7 @@ fn dangerous_html_dropped_with_warning() {
         warnings
             .iter()
             .any(|w| w.contains("dangerouslySetInnerHTML")),
-        "expected dangerouslySetInnerHTML warning, got {:?}",
-        warnings
+        "expected dangerouslySetInnerHTML warning, got {warnings:?}"
     );
 }
 
@@ -117,5 +115,5 @@ fn dangerous_html_dropped_with_warning() {
 fn invalid_jsx_returns_error() {
     let tsx = include_str!("fixtures/invalid_jsx.tsx").trim();
     let res = parse::parse_jsx(tsx);
-    assert!(res.is_err(), "expected parse error for {:?}", tsx);
+    assert!(res.is_err(), "expected parse error for {tsx:?}");
 }

@@ -25,3 +25,10 @@ anyhow          = "1"
 assert_cmd = "2"
 predicates = "3"
 tempfile   = "3"
+
+# cargo-husky installs hooks via its build script when `cargo test` runs.
+# `user-hooks` copies `.cargo-husky/hooks/*` into `.git/hooks/`.
+[dev-dependencies.cargo-husky]
+version          = "1"
+default-features = false
+features         = ["user-hooks"]

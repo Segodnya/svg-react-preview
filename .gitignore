@@ -1,3 +1,7 @@
-/target
-tests/fixtures/*.actual.svg
 .DS_Store
+
+/.claude/scheduled_tasks.lock
+/mutants.out
+/mutants.out.old
+/target
+/tests/fixtures/*.actual.svg
