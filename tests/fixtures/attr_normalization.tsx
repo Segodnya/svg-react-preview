@@ -1,0 +1,1 @@
+<svg className="icon" strokeWidth={2} onClick={() => {}}><use xlinkHref="#a"/></svg>

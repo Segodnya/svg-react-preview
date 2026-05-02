@@ -1,0 +1,23 @@
+[package]
+name = "svg-react-preview"
+version = "0.1.0"
+edition = "2021"
+description = "Preview inline JSX/TSX SVG fragments in Zed"
+repository = "https://github.com/Segodnya/svg-react-preview"
+license = "MIT"
+
+[lib]
+name = "svg_react_preview"
+path = "src/lib.rs"
+
+[[bin]]
+name = "svg-react-preview"
+path = "src/main.rs"
+
+[dependencies]
+swc_common      = "21"
+swc_ecma_ast    = "23"
+swc_ecma_parser = "39"
+swc_ecma_visit  = "23"
+twox-hash       = "2"
+anyhow          = "1"

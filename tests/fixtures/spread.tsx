@@ -1,0 +1,1 @@
+<svg {...props}><path d="C"/></svg>

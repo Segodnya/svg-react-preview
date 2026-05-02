@@ -1,0 +1,1 @@
+<svg dangerouslySetInnerHTML={{__html: "x"}}><path d="D"/></svg>

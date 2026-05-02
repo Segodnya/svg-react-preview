@@ -1,0 +1,3 @@
+/target
+tests/fixtures/*.actual.svg
+.DS_Store

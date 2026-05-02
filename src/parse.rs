@@ -1,0 +1,26 @@
+use anyhow::{anyhow, Result};
+use swc_common::{sync::Lrc, FileName, SourceMap};
+use swc_ecma_ast::{EsVersion, Expr};
+use swc_ecma_parser::{parse_file_as_expr, Syntax, TsSyntax};
+
+/// Parses an arbitrary TSX fragment as a single expression.
+/// Accepts `<svg>…</svg>`, `<>…</>`, parenthesised `(…)` — anything valid as an Expression.
+pub fn parse_jsx(input: &str) -> Result<Box<Expr>> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let fm = cm.new_source_file(
+        FileName::Custom("input.tsx".into()).into(),
+        input.to_string(),
+    );
+
+    let syntax = Syntax::Typescript(TsSyntax {
+        tsx: true,
+        decorators: false,
+        dts: false,
+        no_early_errors: true,
+        disallow_ambiguous_jsx_like: false,
+    });
+
+    let mut recovered = Vec::new();
+    parse_file_as_expr(&fm, syntax, EsVersion::EsNext, None, &mut recovered)
+        .map_err(|e| anyhow!("JSX parse error: {:?}", e.kind()))
+}
