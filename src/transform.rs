@@ -4,7 +4,7 @@ use swc_ecma_ast::{
     JSXElementChild, JSXElementName, JSXExpr, Lit, UnaryOp,
 };
 
-use crate::attr_map::{map_attr, AttrAction};
+use crate::attr_map::{camel_to_kebab, map_attr, AttrAction};
 use crate::defaults::{self, fallback_for};
 
 #[derive(Debug, Clone)]
@@ -129,7 +129,9 @@ fn process_attr(attr: &JSXAttr, ctx: &mut Ctx) -> Option<(String, String)> {
     };
 
     let target = match map_attr(&raw) {
-        AttrAction::Use(n) => n,
+        AttrAction::Use(n) => n.to_string(),
+        AttrAction::Passthrough => raw.clone(),
+        AttrAction::Kebab => camel_to_kebab(&raw),
         AttrAction::Drop => return None,
         AttrAction::DropWarn(msg) => {
             ctx.warnings.push(msg.into());
@@ -139,7 +141,7 @@ fn process_attr(attr: &JSXAttr, ctx: &mut Ctx) -> Option<(String, String)> {
 
     let value = match &attr.value {
         None => return None,
-        Some(JSXAttrValue::Str(s)) => s.value.to_atom_lossy().into_owned().to_string(),
+        Some(JSXAttrValue::Str(s)) => s.value.to_atom_lossy().to_string(),
         Some(JSXAttrValue::JSXExprContainer(c)) => match &c.expr {
             JSXExpr::JSXEmptyExpr(_) => return None,
             JSXExpr::Expr(e) => resolve_expr_value(e, &raw)?,
@@ -152,7 +154,7 @@ fn process_attr(attr: &JSXAttr, ctx: &mut Ctx) -> Option<(String, String)> {
 
 fn resolve_expr_value(e: &Expr, attr_camel: &str) -> Option<String> {
     match e {
-        Expr::Lit(Lit::Str(s)) => Some(s.value.to_atom_lossy().into_owned().to_string()),
+        Expr::Lit(Lit::Str(s)) => Some(s.value.to_atom_lossy().to_string()),
         Expr::Lit(Lit::Num(n)) => Some(format_number(n.value)),
         Expr::Lit(Lit::Bool(b)) => Some(b.value.to_string()),
         Expr::Tpl(t) if t.exprs.is_empty() => {
@@ -160,7 +162,7 @@ fn resolve_expr_value(e: &Expr, attr_camel: &str) -> Option<String> {
                 .quasis
                 .iter()
                 .map(|q| match &q.cooked {
-                    Some(c) => c.to_atom_lossy().into_owned().to_string(),
+                    Some(c) => c.to_atom_lossy().to_string(),
                     None => q.raw.to_string(),
                 })
                 .collect();
@@ -207,14 +209,16 @@ fn placeholder() -> SvgNode {
 
 fn wrap_root(mut nodes: Vec<SvgNode>, ctx: &Ctx) -> SvgNode {
     if nodes.len() == 1 {
-        let only = nodes.pop().unwrap();
-        if let SvgNode::Element {
-            name,
-            mut attrs,
-            children,
-        } = only
-        {
+        if let SvgNode::Element { name, .. } = &nodes[0] {
             if name == "svg" {
+                let SvgNode::Element {
+                    name,
+                    mut attrs,
+                    children,
+                } = nodes.pop().unwrap()
+                else {
+                    unreachable!()
+                };
                 ensure_attr(&mut attrs, "xmlns", defaults::XMLNS);
                 if ctx.has_xlink {
                     ensure_attr(&mut attrs, "xmlns:xlink", defaults::XMLNS_XLINK);
@@ -225,31 +229,22 @@ fn wrap_root(mut nodes: Vec<SvgNode>, ctx: &Ctx) -> SvgNode {
                     children,
                 };
             }
-            return wrap_in_svg(
-                vec![SvgNode::Element {
-                    name,
-                    attrs,
-                    children,
-                }],
-                ctx,
-            );
         }
-        return wrap_in_svg(vec![only], ctx);
     }
     wrap_in_svg(nodes, ctx)
 }
 
 fn wrap_in_svg(children: Vec<SvgNode>, ctx: &Ctx) -> SvgNode {
-    let mut attrs = vec![
-        ("xmlns".into(), defaults::XMLNS.into()),
+    let mut attrs: Vec<(String, String)> = vec![("xmlns".into(), defaults::XMLNS.into())];
+    if ctx.has_xlink {
+        attrs.push(("xmlns:xlink".into(), defaults::XMLNS_XLINK.into()));
+    }
+    attrs.extend([
         ("viewBox".into(), defaults::VIEW_BOX.into()),
         ("width".into(), defaults::SIZE.into()),
         ("height".into(), defaults::SIZE.into()),
         ("fill".into(), defaults::FILL.into()),
-    ];
-    if ctx.has_xlink {
-        attrs.insert(1, ("xmlns:xlink".into(), defaults::XMLNS_XLINK.into()));
-    }
+    ]);
     SvgNode::Element {
         name: "svg".into(),
         attrs,

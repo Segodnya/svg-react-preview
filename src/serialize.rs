@@ -19,7 +19,7 @@ fn write_node(node: &SvgNode, out: &mut String) {
                 out.push(' ');
                 out.push_str(k);
                 out.push_str("=\"");
-                push_attr_escaped(v, out);
+                push_escaped(v, out, true);
                 out.push('"');
             }
             if children.is_empty() && is_void(name) {
@@ -34,7 +34,7 @@ fn write_node(node: &SvgNode, out: &mut String) {
                 out.push('>');
             }
         }
-        SvgNode::Text(t) => push_text_escaped(t, out),
+        SvgNode::Text(t) => push_escaped(t, out, false),
         SvgNode::Comment(c) => {
             out.push_str("<!-- ");
             out.push_str(&c.replace("--", "- - "));
@@ -43,23 +43,13 @@ fn write_node(node: &SvgNode, out: &mut String) {
     }
 }
 
-fn push_attr_escaped(s: &str, out: &mut String) {
+fn push_escaped(s: &str, out: &mut String, in_attr: bool) {
     for ch in s.chars() {
         match ch {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
-            '"' => out.push_str("&quot;"),
-            _ => out.push(ch),
-        }
-    }
-}
-
-fn push_text_escaped(s: &str, out: &mut String) {
-    for ch in s.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
+            '"' if in_attr => out.push_str("&quot;"),
+            '>' if !in_attr => out.push_str("&gt;"),
             _ => out.push(ch),
         }
     }

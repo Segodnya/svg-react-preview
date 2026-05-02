@@ -1,121 +1,180 @@
-// Maps JSX camelCase attribute names to SVG attribute names (kebab-case or namespaced).
-// Attributes not in the table pass through unchanged: viewBox, preserveAspectRatio,
-// gradientUnits, refX, attributeName, etc., are natively camelCase in SVG.
+// Maps JSX camelCase attribute names to SVG attribute names.
+//
+// Strategy:
+//   - explicit drops (event handlers, React-only props)
+//   - explicit static rewrites (className → class, namespaced xlink:*/xml:*, panose1)
+//   - KEEP_CAMEL: SVG 1.1+2 attributes whose canonical form is camelCase
+//   - everything else with a capital letter is auto-kebabed (strokeWidth → stroke-width)
 
 pub enum AttrAction {
-    /// Use the attribute under this name.
-    Use(String),
+    /// Use the attribute under this static name.
+    Use(&'static str),
+    /// Use the attribute under its original (camelCase) name.
+    Passthrough,
+    /// Convert the original name from camelCase to kebab-case.
+    Kebab,
     /// Silently drop (e.g. on-handlers).
     Drop,
     /// Drop and warn the user.
     DropWarn(&'static str),
 }
 
+/// SVG attributes that are natively camelCase (must NOT be kebabed).
+/// Sourced from the SVG 1.1 + 2 specifications and MDN.
+const KEEP_CAMEL: &[&str] = &[
+    "attributeName",
+    "attributeType",
+    "baseFrequency",
+    "baseProfile",
+    "calcMode",
+    "clipPathUnits",
+    "contentScriptType",
+    "contentStyleType",
+    "diffuseConstant",
+    "edgeMode",
+    "externalResourcesRequired",
+    "filterRes",
+    "filterUnits",
+    "glyphRef",
+    "gradientTransform",
+    "gradientUnits",
+    "kernelMatrix",
+    "kernelUnitLength",
+    "keyPoints",
+    "keySplines",
+    "keyTimes",
+    "lengthAdjust",
+    "limitingConeAngle",
+    "markerHeight",
+    "markerUnits",
+    "markerWidth",
+    "maskContentUnits",
+    "maskUnits",
+    "numOctaves",
+    "pathLength",
+    "patternContentUnits",
+    "patternTransform",
+    "patternUnits",
+    "pointsAtX",
+    "pointsAtY",
+    "pointsAtZ",
+    "preserveAlpha",
+    "preserveAspectRatio",
+    "primitiveUnits",
+    "refX",
+    "refY",
+    "repeatCount",
+    "repeatDur",
+    "requiredExtensions",
+    "requiredFeatures",
+    "specularConstant",
+    "specularExponent",
+    "spreadMethod",
+    "startOffset",
+    "stdDeviation",
+    "stitchTiles",
+    "surfaceScale",
+    "systemLanguage",
+    "tableValues",
+    "targetX",
+    "targetY",
+    "textLength",
+    "viewBox",
+    "viewTarget",
+    "xChannelSelector",
+    "yChannelSelector",
+    "zoomAndPan",
+];
+
 pub fn map_attr(name: &str) -> AttrAction {
     if is_event_handler(name) {
         return AttrAction::Drop;
     }
     match name {
-        "htmlFor" => AttrAction::Drop,
+        "htmlFor" | "ref" | "key" => AttrAction::Drop,
         "dangerouslySetInnerHTML" => AttrAction::DropWarn(
             "dangerouslySetInnerHTML stripped — arbitrary HTML rendering is not supported",
         ),
-        "ref" | "key" => AttrAction::Drop,
-        "className" => AttrAction::Use("class".into()),
+        "className" => AttrAction::Use("class"),
 
-        // SVG attributes that require kebab-case.
-        "accentHeight" => AttrAction::Use("accent-height".into()),
-        "alignmentBaseline" => AttrAction::Use("alignment-baseline".into()),
-        "arabicForm" => AttrAction::Use("arabic-form".into()),
-        "baselineShift" => AttrAction::Use("baseline-shift".into()),
-        "capHeight" => AttrAction::Use("cap-height".into()),
-        "clipPath" => AttrAction::Use("clip-path".into()),
-        "clipRule" => AttrAction::Use("clip-rule".into()),
-        "colorInterpolation" => AttrAction::Use("color-interpolation".into()),
-        "colorInterpolationFilters" => AttrAction::Use("color-interpolation-filters".into()),
-        "colorProfile" => AttrAction::Use("color-profile".into()),
-        "colorRendering" => AttrAction::Use("color-rendering".into()),
-        "dominantBaseline" => AttrAction::Use("dominant-baseline".into()),
-        "enableBackground" => AttrAction::Use("enable-background".into()),
-        "fillOpacity" => AttrAction::Use("fill-opacity".into()),
-        "fillRule" => AttrAction::Use("fill-rule".into()),
-        "floodColor" => AttrAction::Use("flood-color".into()),
-        "floodOpacity" => AttrAction::Use("flood-opacity".into()),
-        "fontFamily" => AttrAction::Use("font-family".into()),
-        "fontSize" => AttrAction::Use("font-size".into()),
-        "fontSizeAdjust" => AttrAction::Use("font-size-adjust".into()),
-        "fontStretch" => AttrAction::Use("font-stretch".into()),
-        "fontStyle" => AttrAction::Use("font-style".into()),
-        "fontVariant" => AttrAction::Use("font-variant".into()),
-        "fontWeight" => AttrAction::Use("font-weight".into()),
-        "glyphName" => AttrAction::Use("glyph-name".into()),
-        "glyphOrientationHorizontal" => AttrAction::Use("glyph-orientation-horizontal".into()),
-        "glyphOrientationVertical" => AttrAction::Use("glyph-orientation-vertical".into()),
-        "horizAdvX" => AttrAction::Use("horiz-adv-x".into()),
-        "horizOriginX" => AttrAction::Use("horiz-origin-x".into()),
-        "imageRendering" => AttrAction::Use("image-rendering".into()),
-        "letterSpacing" => AttrAction::Use("letter-spacing".into()),
-        "lightingColor" => AttrAction::Use("lighting-color".into()),
-        "markerEnd" => AttrAction::Use("marker-end".into()),
-        "markerMid" => AttrAction::Use("marker-mid".into()),
-        "markerStart" => AttrAction::Use("marker-start".into()),
-        "overlinePosition" => AttrAction::Use("overline-position".into()),
-        "overlineThickness" => AttrAction::Use("overline-thickness".into()),
-        "paintOrder" => AttrAction::Use("paint-order".into()),
-        "panose1" => AttrAction::Use("panose-1".into()),
-        "pointerEvents" => AttrAction::Use("pointer-events".into()),
-        "renderingIntent" => AttrAction::Use("rendering-intent".into()),
-        "shapeRendering" => AttrAction::Use("shape-rendering".into()),
-        "stopColor" => AttrAction::Use("stop-color".into()),
-        "stopOpacity" => AttrAction::Use("stop-opacity".into()),
-        "strikethroughPosition" => AttrAction::Use("strikethrough-position".into()),
-        "strikethroughThickness" => AttrAction::Use("strikethrough-thickness".into()),
-        "strokeDasharray" => AttrAction::Use("stroke-dasharray".into()),
-        "strokeDashoffset" => AttrAction::Use("stroke-dashoffset".into()),
-        "strokeLinecap" => AttrAction::Use("stroke-linecap".into()),
-        "strokeLinejoin" => AttrAction::Use("stroke-linejoin".into()),
-        "strokeMiterlimit" => AttrAction::Use("stroke-miterlimit".into()),
-        "strokeOpacity" => AttrAction::Use("stroke-opacity".into()),
-        "strokeWidth" => AttrAction::Use("stroke-width".into()),
-        "textAnchor" => AttrAction::Use("text-anchor".into()),
-        "textDecoration" => AttrAction::Use("text-decoration".into()),
-        "textRendering" => AttrAction::Use("text-rendering".into()),
-        "transformOrigin" => AttrAction::Use("transform-origin".into()),
-        "underlinePosition" => AttrAction::Use("underline-position".into()),
-        "underlineThickness" => AttrAction::Use("underline-thickness".into()),
-        "unicodeBidi" => AttrAction::Use("unicode-bidi".into()),
-        "unicodeRange" => AttrAction::Use("unicode-range".into()),
-        "unitsPerEm" => AttrAction::Use("units-per-em".into()),
-        "vAlphabetic" => AttrAction::Use("v-alphabetic".into()),
-        "vHanging" => AttrAction::Use("v-hanging".into()),
-        "vIdeographic" => AttrAction::Use("v-ideographic".into()),
-        "vMathematical" => AttrAction::Use("v-mathematical".into()),
-        "vectorEffect" => AttrAction::Use("vector-effect".into()),
-        "vertAdvY" => AttrAction::Use("vert-adv-y".into()),
-        "vertOriginX" => AttrAction::Use("vert-origin-x".into()),
-        "vertOriginY" => AttrAction::Use("vert-origin-y".into()),
-        "wordSpacing" => AttrAction::Use("word-spacing".into()),
-        "writingMode" => AttrAction::Use("writing-mode".into()),
-        "xHeight" => AttrAction::Use("x-height".into()),
+        // Digit boundary — heuristic can't infer the dash, so handle explicitly.
+        "panose1" => AttrAction::Use("panose-1"),
 
         // xlink:* and xml:* are namespaced. xlink:* also requires xmlns:xlink on the root.
-        "xlinkActuate" => AttrAction::Use("xlink:actuate".into()),
-        "xlinkArcrole" => AttrAction::Use("xlink:arcrole".into()),
-        "xlinkHref" => AttrAction::Use("xlink:href".into()),
-        "xlinkRole" => AttrAction::Use("xlink:role".into()),
-        "xlinkShow" => AttrAction::Use("xlink:show".into()),
-        "xlinkTitle" => AttrAction::Use("xlink:title".into()),
-        "xlinkType" => AttrAction::Use("xlink:type".into()),
-        "xmlnsXlink" => AttrAction::Use("xmlns:xlink".into()),
-        "xmlBase" => AttrAction::Use("xml:base".into()),
-        "xmlLang" => AttrAction::Use("xml:lang".into()),
-        "xmlSpace" => AttrAction::Use("xml:space".into()),
+        "xlinkActuate" => AttrAction::Use("xlink:actuate"),
+        "xlinkArcrole" => AttrAction::Use("xlink:arcrole"),
+        "xlinkHref" => AttrAction::Use("xlink:href"),
+        "xlinkRole" => AttrAction::Use("xlink:role"),
+        "xlinkShow" => AttrAction::Use("xlink:show"),
+        "xlinkTitle" => AttrAction::Use("xlink:title"),
+        "xlinkType" => AttrAction::Use("xlink:type"),
+        "xmlnsXlink" => AttrAction::Use("xmlns:xlink"),
+        "xmlBase" => AttrAction::Use("xml:base"),
+        "xmlLang" => AttrAction::Use("xml:lang"),
+        "xmlSpace" => AttrAction::Use("xml:space"),
 
-        other => AttrAction::Use(other.to_string()),
+        _ if KEEP_CAMEL.contains(&name) => AttrAction::Passthrough,
+        _ if name.bytes().any(|b| b.is_ascii_uppercase()) => AttrAction::Kebab,
+        _ => AttrAction::Passthrough,
     }
 }
 
+/// Inserts `-` before each uppercase ASCII letter, then lowercases.
+/// `strokeWidth` → `stroke-width`, `accentHeight` → `accent-height`.
+pub fn camel_to_kebab(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for (i, c) in s.char_indices() {
+        if i > 0 && c.is_ascii_uppercase() {
+            out.push('-');
+        }
+        out.extend(c.to_lowercase());
+    }
+    out
+}
+
 fn is_event_handler(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    bytes.len() > 2 && bytes[0] == b'o' && bytes[1] == b'n' && bytes[2].is_ascii_uppercase()
+    name.strip_prefix("on")
+        .and_then(|r| r.chars().next())
+        .is_some_and(|c| c.is_ascii_uppercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kebab_basics() {
+        assert_eq!(camel_to_kebab("strokeWidth"), "stroke-width");
+        assert_eq!(camel_to_kebab("accentHeight"), "accent-height");
+        assert_eq!(
+            camel_to_kebab("glyphOrientationHorizontal"),
+            "glyph-orientation-horizontal"
+        );
+        assert_eq!(camel_to_kebab("vAlphabetic"), "v-alphabetic");
+        assert_eq!(camel_to_kebab("xHeight"), "x-height");
+    }
+
+    #[test]
+    fn keep_camel_passes_through() {
+        assert!(matches!(map_attr("viewBox"), AttrAction::Passthrough));
+        assert!(matches!(
+            map_attr("preserveAspectRatio"),
+            AttrAction::Passthrough
+        ));
+        assert!(matches!(map_attr("gradientUnits"), AttrAction::Passthrough));
+        assert!(matches!(map_attr("refX"), AttrAction::Passthrough));
+    }
+
+    #[test]
+    fn camel_attrs_are_kebabed() {
+        assert!(matches!(map_attr("strokeWidth"), AttrAction::Kebab));
+        assert!(matches!(map_attr("clipPath"), AttrAction::Kebab));
+        assert!(matches!(map_attr("fillOpacity"), AttrAction::Kebab));
+    }
+
+    #[test]
+    fn lowercase_passes_through() {
+        assert!(matches!(map_attr("fill"), AttrAction::Passthrough));
+        assert!(matches!(map_attr("d"), AttrAction::Passthrough));
+    }
 }
