@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use swc_ecma_ast::{
-    BinaryOp, Expr, JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
-    JSXElementName, JSXExpr, Lit, UnaryOp,
+    BinaryOp, Expr, JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement,
+    JSXElementChild, JSXElementName, JSXExpr, Lit, UnaryOp,
 };
 
 use crate::attr_map::{map_attr, AttrAction};
@@ -89,7 +89,11 @@ fn transform_element(el: &JSXElement, ctx: &mut Ctx) -> SvgNode {
     }
 
     let children = transform_children(&el.children, ctx);
-    SvgNode::Element { name, attrs, children }
+    SvgNode::Element {
+        name,
+        attrs,
+        children,
+    }
 }
 
 fn transform_children(children: &[JSXElementChild], ctx: &mut Ctx) -> Vec<SvgNode> {
@@ -184,7 +188,7 @@ fn format_number(n: f64) -> String {
 }
 
 fn is_lowercase_tag(s: &str) -> bool {
-    s.chars().next().map_or(false, |c| c.is_ascii_lowercase())
+    s.chars().next().is_some_and(|c| c.is_ascii_lowercase())
 }
 
 fn placeholder() -> SvgNode {
@@ -204,15 +208,31 @@ fn placeholder() -> SvgNode {
 fn wrap_root(mut nodes: Vec<SvgNode>, ctx: &Ctx) -> SvgNode {
     if nodes.len() == 1 {
         let only = nodes.pop().unwrap();
-        if let SvgNode::Element { name, mut attrs, children } = only {
+        if let SvgNode::Element {
+            name,
+            mut attrs,
+            children,
+        } = only
+        {
             if name == "svg" {
                 ensure_attr(&mut attrs, "xmlns", defaults::XMLNS);
                 if ctx.has_xlink {
                     ensure_attr(&mut attrs, "xmlns:xlink", defaults::XMLNS_XLINK);
                 }
-                return SvgNode::Element { name, attrs, children };
+                return SvgNode::Element {
+                    name,
+                    attrs,
+                    children,
+                };
             }
-            return wrap_in_svg(vec![SvgNode::Element { name, attrs, children }], ctx);
+            return wrap_in_svg(
+                vec![SvgNode::Element {
+                    name,
+                    attrs,
+                    children,
+                }],
+                ctx,
+            );
         }
         return wrap_in_svg(vec![only], ctx);
     }

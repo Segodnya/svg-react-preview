@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{anyhow, Result};
-use svg_react_preview::{parse, serialize, transform};
+use svg_react_preview::{expand_selection, parse, serialize, transform};
 use twox_hash::XxHash64;
 
 mod open_in_zed;
@@ -25,7 +25,7 @@ fn run() -> Result<()> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(anyhow!(
-            "empty input (set $SVG_REACT_PREVIEW_INPUT or pipe via stdin)"
+            "empty input (place cursor inside <svg> with $SVG_REACT_PREVIEW_FILE/ROW/COLUMN, set $SVG_REACT_PREVIEW_INPUT, or pipe via stdin)"
         ));
     }
 
@@ -43,14 +43,28 @@ fn run() -> Result<()> {
 }
 
 fn read_input() -> Result<String> {
-    if let Ok(v) = env::var("SVG_REACT_PREVIEW_INPUT") {
-        if !v.is_empty() {
-            return Ok(v);
-        }
+    let file = non_empty_env("SVG_REACT_PREVIEW_FILE");
+    let row = non_empty_env("SVG_REACT_PREVIEW_ROW").and_then(|s| s.parse::<usize>().ok());
+    let col = non_empty_env("SVG_REACT_PREVIEW_COLUMN").and_then(|s| s.parse::<usize>().ok());
+
+    if let (Some(file), Some(row), Some(col)) = (file, row, col) {
+        let source =
+            fs::read_to_string(&file).map_err(|e| anyhow!("cannot read {}: {}", file, e))?;
+        return expand_selection::find_svg_at(&source, row, col)
+            .map_err(|e| anyhow!("{} [{}:{}:{}]", e, file, row, col));
     }
+
+    if let Some(v) = non_empty_env("SVG_REACT_PREVIEW_INPUT") {
+        return Ok(v);
+    }
+
     let mut buf = String::new();
     io::stdin().read_to_string(&mut buf)?;
     Ok(buf)
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|s| !s.is_empty())
 }
 
 fn write_temp(source: &str, xml: &str) -> Result<PathBuf> {

@@ -8,7 +8,11 @@ pub fn to_xml(node: &SvgNode) -> String {
 
 fn write_node(node: &SvgNode, out: &mut String) {
     match node {
-        SvgNode::Element { name, attrs, children } => {
+        SvgNode::Element {
+            name,
+            attrs,
+            children,
+        } => {
             out.push('<');
             out.push_str(name);
             for (k, v) in attrs {

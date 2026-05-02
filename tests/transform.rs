@@ -105,7 +105,9 @@ fn dangerous_html_dropped_with_warning() {
         include_str!("fixtures/dangerous_html.svg").trim_end()
     );
     assert!(
-        warnings.iter().any(|w| w.contains("dangerouslySetInnerHTML")),
+        warnings
+            .iter()
+            .any(|w| w.contains("dangerouslySetInnerHTML")),
         "expected dangerouslySetInnerHTML warning, got {:?}",
         warnings
     );

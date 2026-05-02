@@ -17,9 +17,9 @@ pub fn map_attr(name: &str) -> AttrAction {
     }
     match name {
         "htmlFor" => AttrAction::Drop,
-        "dangerouslySetInnerHTML" => {
-            AttrAction::DropWarn("dangerouslySetInnerHTML stripped — arbitrary HTML rendering is not supported")
-        }
+        "dangerouslySetInnerHTML" => AttrAction::DropWarn(
+            "dangerouslySetInnerHTML stripped — arbitrary HTML rendering is not supported",
+        ),
         "ref" | "key" => AttrAction::Drop,
         "className" => AttrAction::Use("class".into()),
 
