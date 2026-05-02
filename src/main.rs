@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Result, anyhow};
-use svg_react_preview::{expand_selection, parse, serialize, transform};
-use swc_ecma_ast::Expr;
+use svg_react_preview::source::Source;
+use svg_react_preview::{serialize, transform};
 
 mod open_in_zed;
 
@@ -22,7 +22,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<()> {
-    let expr = read_input()?;
+    let expr = select_source()?.into_expr()?;
     let result = transform::to_svg(&expr)?;
 
     for w in &result.warnings {
@@ -35,36 +35,31 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn read_input() -> Result<Box<Expr>> {
+/// Resolves the input mode from environment + stdin per the precedence documented
+/// in the README: `FILE`+`ROW`+`COLUMN` → `INPUT` → stdin.
+fn select_source() -> Result<Source> {
     let file = non_empty_env("SVG_REACT_PREVIEW_FILE");
     let row = non_empty_env("SVG_REACT_PREVIEW_ROW").and_then(|s| s.parse::<usize>().ok());
     let col = non_empty_env("SVG_REACT_PREVIEW_COLUMN").and_then(|s| s.parse::<usize>().ok());
 
-    if let (Some(file), Some(row), Some(col)) = (file, row, col) {
+    if let (Some(path), Some(row), Some(col)) = (file, row, col) {
         let source =
-            fs::read_to_string(&file).map_err(|e| anyhow!("cannot read {}: {}", file, e))?;
-        let element = expand_selection::find_svg_at(&source, row, col)
-            .map_err(|e| anyhow!("{} [{}:{}:{}]", e, file, row, col))?;
-        return Ok(Box::new(Expr::JSXElement(element)));
+            fs::read_to_string(&path).map_err(|e| anyhow!("cannot read {}: {}", path, e))?;
+        return Ok(Source::Cursor {
+            source,
+            path,
+            row,
+            col,
+        });
     }
 
     if let Some(v) = non_empty_env("SVG_REACT_PREVIEW_INPUT") {
-        return parse_fragment(&v);
+        return Ok(Source::Fragment(v));
     }
 
     let mut buf = String::new();
     io::stdin().read_to_string(&mut buf)?;
-    parse_fragment(&buf)
-}
-
-fn parse_fragment(input: &str) -> Result<Box<Expr>> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow!(
-            "empty input (place cursor inside <svg> with $SVG_REACT_PREVIEW_FILE/ROW/COLUMN, set $SVG_REACT_PREVIEW_INPUT, or pipe via stdin)"
-        ));
-    }
-    parse::parse_jsx(trimmed)
+    Ok(Source::Fragment(buf))
 }
 
 fn non_empty_env(key: &str) -> Option<String> {

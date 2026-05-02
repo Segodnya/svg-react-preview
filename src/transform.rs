@@ -43,17 +43,29 @@ pub fn to_svg(expr: &Expr) -> Result<TransformResult> {
 }
 
 fn walk_expr(expr: &Expr, ctx: &mut Ctx) -> Vec<SvgNode> {
-    match expr {
+    match narrow_to_static_branch(expr) {
         Expr::JSXElement(el) => vec![transform_element(el, ctx)],
         Expr::JSXFragment(frag) => transform_children(&frag.children, ctx),
         // Defensive — swc's `parse_file_as_expr` does not surface `Expr::JSXEmpty` at the top level.
         Expr::JSXEmpty(_) => Vec::new(),
-        Expr::Paren(p) => walk_expr(&p.expr, ctx),
-        // For ternary expressions, render the consequent (first branch).
-        Expr::Cond(c) => walk_expr(&c.cons, ctx),
-        // For `cond && <jsx/>`, render the right-hand side.
-        Expr::Bin(b) if matches!(b.op, BinaryOp::LogicalAnd) => walk_expr(&b.right, ctx),
         _ => Vec::new(),
+    }
+}
+
+/// Walks past parenthesisation and statically-decidable branches:
+/// - `(expr)` → `expr`
+/// - `cond ? a : b` → `a`
+/// - `cond && rhs` → `rhs`
+///
+/// Used wherever we need to find the JSX (or value) that would actually render
+/// when the condition is treated as truthy. Centralised so `walk_expr` and
+/// `resolve_expr_value` cannot drift on this rule.
+fn narrow_to_static_branch(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(p) => narrow_to_static_branch(&p.expr),
+        Expr::Cond(c) => narrow_to_static_branch(&c.cons),
+        Expr::Bin(b) if matches!(b.op, BinaryOp::LogicalAnd) => narrow_to_static_branch(&b.right),
+        _ => expr,
     }
 }
 
@@ -157,7 +169,7 @@ fn process_attr(attr: &JSXAttr, ctx: &mut Ctx) -> Option<(String, String)> {
 }
 
 fn resolve_expr_value(e: &Expr, attr_camel: &str) -> Option<String> {
-    match e {
+    match narrow_to_static_branch(e) {
         Expr::Lit(Lit::Str(s)) => Some(s.value.to_atom_lossy().to_string()),
         Expr::Lit(Lit::Num(n)) => Some(format_number(n.value)),
         Expr::Lit(Lit::Bool(b)) => Some(b.value.to_string()),
@@ -173,11 +185,6 @@ fn resolve_expr_value(e: &Expr, attr_camel: &str) -> Option<String> {
                 })
                 .collect();
             Some(s)
-        }
-        Expr::Paren(p) => resolve_expr_value(&p.expr, attr_camel),
-        Expr::Cond(c) => resolve_expr_value(&c.cons, attr_camel),
-        Expr::Bin(b) if matches!(b.op, BinaryOp::LogicalAnd) => {
-            resolve_expr_value(&b.right, attr_camel)
         }
         Expr::Unary(u) if matches!(u.op, UnaryOp::Minus) => {
             resolve_expr_value(&u.arg, attr_camel).map(|s| format!("-{}", s))

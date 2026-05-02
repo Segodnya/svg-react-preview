@@ -1,10 +1,10 @@
 use anyhow::{Result, anyhow};
-use swc_common::{FileName, SourceMap, Spanned, sync::Lrc};
+use swc_common::Spanned;
 use swc_ecma_ast::{EsVersion, JSXElement, JSXElementName};
 use swc_ecma_parser::parse_file_as_module;
 use swc_ecma_visit::{Visit, VisitWith};
 
-use crate::parse::tsx_syntax;
+use crate::parse::{make_source_file, tsx_syntax};
 
 /// Returns the innermost `<svg>` element enclosing (row, col) as a parsed AST node.
 /// `row` and `col` are 1-based, matching Zed's `${ZED_ROW}` / `${ZED_COLUMN}`.
@@ -12,12 +12,7 @@ pub fn find_svg_at(source: &str, row: usize, col: usize) -> Result<Box<JSXElemen
     let offset = row_col_to_offset(source, row, col)
         .ok_or_else(|| anyhow!("cursor position {}:{} is past end of file", row, col))?;
 
-    let cm: Lrc<SourceMap> = Default::default();
-    let fm = cm.new_source_file(
-        FileName::Custom("input.tsx".into()).into(),
-        source.to_string(),
-    );
-
+    let (_cm, fm) = make_source_file(source);
     let mut recovered = Vec::new();
     let module = parse_file_as_module(&fm, tsx_syntax(), EsVersion::EsNext, None, &mut recovered)
         .map_err(|e| {
