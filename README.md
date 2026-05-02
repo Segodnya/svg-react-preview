@@ -2,29 +2,114 @@
 
 CLI for previewing inline JSX/TSX SVG fragments in the **Zed** editor.
 
-Zed has a native preview for `.svg` files but no way to open SVG defined inline inside JSX. Place the cursor anywhere inside an `<svg>…</svg>` element and run the task — the tool parses the file, finds the enclosing `<svg>`, normalises it into a valid `.svg`, writes it to a temporary directory, and opens it with `zed <path>` so Zed shows the result in a new tab using its built-in SVG preview.
+## The pain
 
-On **macOS**, the rendered preview opens automatically: AppleScript opens the file in Zed (so focus is guaranteed before the next keystroke), synthesises `Cmd+Shift+V` to spawn the preview tab, then sends `Cmd+Shift+[` + `Cmd+W` to close the redundant text-mode `.svg` tab — leaving exactly one preview tab per run. On **Linux/Windows**, Zed opens the file as text — press `Ctrl+Shift+V` to switch into preview mode.
+You're staring at a React icon component. A wall of `<path>` data and viewBox math, and absolutely no idea what it actually looks like:
+
+![Inline SVG inside a .tsx component — unreadable by eye](assets/component.png)
+
+Zed has a beautiful native preview for standalone `.svg` files, but nothing for SVG fragments living inside JSX. Other editors have the same gap. Today the only options are: copy the markup into a scratch `.svg`, paste it into a browser DevTools, or pop open Figma. Every one of those breaks flow.
+
+Zed doesn't yet expose an extension API surface that could solve this in-editor — so this tool wires it up through a **Zed task** and a tiny CLI. It's not the prettiest integration story, but it works today.
+
+## What it does
+
+Place the cursor anywhere inside an `<svg>…</svg>` element and run the task. The CLI parses the file with swc, finds the innermost enclosing `<svg>`, normalises it into a valid standalone `.svg` (JSX-isms like `className`, `strokeWidth`, dynamic `{props}` are translated or dropped — see [Behaviour](#behaviour)), writes it to `$TMPDIR/svg-react-preview/`, and opens that file in Zed so its built-in SVG preview can render it.
+
+**1. Open the command palette and run `task: spawn`:**
+
+![Zed command palette](assets/command.png)
+
+**2. Pick "Preview SVG (cursor)" from the task list:**
+
+![Task picker showing Preview SVG (cursor)](assets/action.png)
+
+The result — a real preview tab, next to your source:
+
+![Rendered SVG preview tab in Zed](assets/preview.png)
+
+### Platform behaviour
+
+- **macOS** — fully automatic. AppleScript opens the file in Zed (so focus is guaranteed before the next keystroke), synthesises `Cmd+Shift+V` to spawn the preview tab, then sends `Cmd+Shift+[` + `Cmd+W` to close the redundant text-mode `.svg` tab — leaving exactly one preview tab per run.
+- **Linux / Windows** — the `.svg` file opens as text in a new tab. One extra keystroke (`Ctrl+Shift+V`) switches it into preview mode. No synthetic-input permission prompts to deal with.
 
 > The auto-close step relies on Zed default keymap (`Cmd+Shift+[` = `pane::ActivatePrevItem`, `Cmd+W` = `pane::CloseActiveItem`) and on the preview tab opening to the right of the source text tab in the same pane. If you remap those actions or your Zed opens preview in a split pane, the wrong tab may close — set `SVG_REACT_PREVIEW_HOTKEY=none` to disable all keystroke synthesis and trigger preview manually.
 
-## Install
+## Setup — step by step
+
+### 1. Install the CLI
 
 ```bash
 cargo install --git https://github.com/Segodnya/svg-react-preview
 ```
 
-The binary lands at `~/.cargo/bin/svg-react-preview` (must be on `PATH`).
+The binary lands at `~/.cargo/bin/svg-react-preview`. Make sure that directory is on your `PATH` (`echo $PATH | tr ':' '\n' | grep cargo` should print it; if not, add `export PATH="$HOME/.cargo/bin:$PATH"` to your shell profile).
 
-You also need a `zed` shim on `PATH` (Zed → CLI → Install Shell Command). Without it, the preview is still saved to `$TMPDIR/svg-react-preview/` and the path is printed to stderr.
+### 2. Install the `zed` CLI shim
 
-### macOS: Accessibility permission
+In Zed: **Zed → CLI → Install `zed` Shell Command**. This puts a `zed` binary on `PATH` so the tool can open files in your running Zed window.
 
-Auto-preview synthesises a `Cmd+Shift+V` keystroke via `osascript`. macOS gates synthetic keystrokes behind Accessibility — on first run, grant access in **System Settings → Privacy & Security → Accessibility** to whichever process spawns the binary (typically Zed.app, since the task runs from Zed). Without this permission the file still opens as text and the tool prints a hint to stderr; press `Cmd+Shift+V` manually.
+Without the shim the tool still works — it writes the SVG to `$TMPDIR/svg-react-preview/` and prints the path to stderr — but you'd have to open it manually.
 
-## Zed configuration
+### 3. Register the Zed task
 
-Add the task to `~/.config/zed/tasks.json`:
+Open `~/.config/zed/tasks.json` (Zed: **command palette → `zed: open tasks`**) and add:
+
+```jsonc
+[
+  {
+    "label": "Preview SVG (cursor)",
+    "command": "svg-react-preview",
+    "env": {
+      "SVG_REACT_PREVIEW_FILE":   "${ZED_FILE}",
+      "SVG_REACT_PREVIEW_ROW":    "${ZED_ROW}",
+      "SVG_REACT_PREVIEW_COLUMN": "${ZED_COLUMN}"
+    },
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "reveal": "no_focus",
+    "hide": "on_success",
+    "save": "none"
+  }
+]
+```
+
+### 4. (Optional) Bind a keyboard shortcut
+
+In `~/.config/zed/keymap.json`:
+
+```jsonc
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-shift-v": ["task::Spawn", { "task_name": "Preview SVG (cursor)" }]
+    }
+  }
+]
+```
+
+Both files side-by-side:
+
+![tasks.json and keymap.json in Zed](assets/config.png)
+
+### 5. macOS only — grant Accessibility permission
+
+The auto-preview step synthesises a `Cmd+Shift+V` keystroke via `osascript`. macOS gates synthetic keystrokes behind Accessibility, so on first run grant access in **System Settings → Privacy & Security → Accessibility** to whichever process spawns the binary (typically **Zed.app**, since the task runs from Zed).
+
+Without this permission the file still opens as text, and the tool prints a hint to stderr — just press `Cmd+Shift+V` yourself.
+
+### 6. Try it
+
+Open any `.tsx`/`.jsx` file with an inline `<svg>`, place your cursor inside it, and run the task (keybinding from step 4 or **command palette → `task: spawn` → `Preview SVG (cursor)`**). A preview tab should appear next to your source.
+
+That's it.
+
+---
+
+## Reference
+
+### Full task config (with optional hotkey override)
 
 ```jsonc
 [
@@ -47,28 +132,9 @@ Add the task to `~/.config/zed/tasks.json`:
 ]
 ```
 
-Optional keybinding in `~/.config/zed/keymap.json`:
+If the cursor is not inside an `<svg>` element, the tool prints a clear error to stderr: `cursor at <file>:<row>:<col> is not inside an <svg> element`.
 
-```jsonc
-[
-  {
-    "context": "Editor",
-    "bindings": {
-      "alt-shift-v": ["task::Spawn", { "task_name": "Preview SVG (cursor)" }]
-    }
-  }
-]
-```
-
-## Usage
-
-1. Place the cursor anywhere inside an `<svg>…</svg>` element in a `.tsx` / `.jsx` file — no selection needed. The tool parses the whole file with swc and finds the innermost enclosing `<svg>`.
-2. Run the task (via keybinding or `task: spawn`).
-3. A new tab opens with the preview. On macOS it switches to preview mode automatically; on Linux/Windows press `Ctrl+Shift+V`.
-
-If the cursor is not inside an `<svg>` element, the tool prints a clear error to stderr (`cursor at <file>:<row>:<col> is not inside an <svg> element`).
-
-## Environment variables
+### Environment variables
 
 | Variable                   | Purpose                                                          | Default       |
 |----------------------------|------------------------------------------------------------------|---------------|
@@ -82,7 +148,7 @@ If the cursor is not inside an `<svg>` element, the tool prints a clear error to
 
 **Hotkey syntax**: `+`-separated tokens, case-insensitive. Modifiers: `cmd`/`command`, `shift`, `alt`/`opt`/`option`, `ctrl`/`control`. Keys: any letter, digit, `f1`–`f12`, `space`, `tab`, `return`/`enter`, `escape`/`esc`. If Zed has no binding for the configured shortcut, the keystroke is silently ignored — set `SVG_REACT_PREVIEW_HOTKEY=none` and trigger preview manually via the toolbar button.
 
-## Behaviour
+### Behaviour
 
 - `<Icon/>` (PascalCase, unresolved component) → placeholder `<rect/>` with a dashed border + warning on stderr.
 - `{cond && <path/>}` → renders the right-hand side.
@@ -92,6 +158,18 @@ If the cursor is not inside an `<svg>` element, the tool prints a clear error to
 - `className` → `class`, `strokeWidth` → `stroke-width`, `xlinkHref` → `xlink:href` (with `xmlns:xlink` auto-added).
 - `onClick`, `onMouseEnter`, `htmlFor`, `dangerouslySetInnerHTML` → dropped.
 - If the root is not `<svg>` or there are multiple roots, the output is wrapped in `<svg viewBox="0 0 24 24">`.
+
+---
+
+## Feedback
+
+I built this for myself, but if it solves a real itch for you too — please try it and tell me how it goes:
+
+- Does the workflow actually feel useful in your day-to-day, or is the "run a task" detour too clunky?
+- Any JSX patterns the parser stumbles on? (Bring real-world examples — they make great test fixtures.)
+- Linux / Windows users: is the manual `Ctrl+Shift+V` step acceptable, or worth automating?
+
+Issues and PRs are very welcome over at [github.com/Segodnya/svg-react-preview](https://github.com/Segodnya/svg-react-preview). If you have ideas for a proper Zed extension once the API allows it, even better.
 
 ## Development
 
