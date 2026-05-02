@@ -211,8 +211,7 @@ The `.github/workflows/` set runs on every push to `main` and every PR targeting
   - `cargo build --release`
   - `cargo doc` (`-D warnings`)
 - **`coverage.yml`**
-  - `cargo llvm-cov` → Codecov
-  - fails if line coverage < 95%
+  - `cargo llvm-cov --fail-under-lines 95` — single-step gate, no external upload
 - **`security.yml`**
   - `cargo deny check all` (advisories + bans + licenses + sources)
   - `cargo audit` (RustSec)
@@ -223,7 +222,7 @@ The `.github/workflows/` set runs on every push to `main` and every PR targeting
   - `cargo geiger --forbid-only` (unsafe stats)
   - `cargo outdated` (newer dependency versions)
   - `cargo msrv verify` (pinned MSRV still compiles)
-  - `cargo mutants` (mutation testing)
+  - `cargo mutants` (mutation testing — runs on `macos-latest` so `#[cfg(target_os = "macos")]` tests can kill mutations in `preview_effects` / `config`)
 
 All jobs are blocking. To reproduce locally install the tools once:
 

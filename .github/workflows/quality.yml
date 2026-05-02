@@ -81,7 +81,10 @@ jobs:
 
   mutants:
     name: cargo-mutants (mutation testing)
-    runs-on: ubuntu-latest
+    # Run on macOS so the macOS-gated tests in `preview_effects.rs` and
+    # `config.rs` actually compile and execute — otherwise mutations in that
+    # code can never be killed.
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

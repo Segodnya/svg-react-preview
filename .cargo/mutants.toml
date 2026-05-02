@@ -18,4 +18,14 @@ exclude_re = [
     # guarantees). Equivalent in the input domain. The `+` variant is killed
     # by `picks_innermost_when_outer_span_padded`.
     "expand_selection.rs:84.*replace - with /",
+
+    # `macos::spawn_real` is the irreducible kernel that calls
+    # `Command::new("osascript")`, pipes a script into stdin, and reads stdout.
+    # The seam-and-mock split (see `run_with` + `classify` + `message_for`)
+    # already covers every observable branch *except* "did we actually invoke a
+    # subprocess" — killing those mutations requires running osascript in CI,
+    # which would need GUI permissions (Accessibility) and a focused Zed window.
+    # Treat this as the same category as `expand_selection`'s equivalent
+    # mutations: covered by code review, not by the test suite.
+    "preview_effects.rs.*spawn_real",
 ]

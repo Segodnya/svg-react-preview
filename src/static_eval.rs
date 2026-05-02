@@ -11,7 +11,23 @@
 
 use swc_ecma_ast::{BinaryOp, Expr, Lit, UnaryOp};
 
-use crate::defaults::fallback_for;
+const SIZE: &str = "24";
+const FILL: &str = "currentColor";
+const STROKE: &str = "none";
+const STROKE_WIDTH: &str = "1.5";
+
+/// Returns a fallback value for a JSX attribute name (camelCase) or its SVG
+/// equivalent (kebab-case), or `None` if no fallback is defined.
+#[must_use]
+fn fallback_for(attr: &str) -> Option<&'static str> {
+    match attr {
+        "size" | "width" | "height" => Some(SIZE),
+        "color" | "fill" => Some(FILL),
+        "stroke" => Some(STROKE),
+        "strokeWidth" | "stroke-width" => Some(STROKE_WIDTH),
+        _ => None,
+    }
+}
 
 /// Walks past parenthesisation and statically-decidable branches.
 #[must_use]
@@ -63,3 +79,35 @@ pub fn resolve_attr_value(e: &Expr, attr_camel: &str) -> Option<String> {
 // string/number/bool literals, template literals with and without exprs, unary
 // minus/plus, identifier fallback). Direct unit tests would just duplicate
 // those assertions through a more brittle setup.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_size_family() {
+        assert_eq!(fallback_for("size"), Some(SIZE));
+        assert_eq!(fallback_for("width"), Some(SIZE));
+        assert_eq!(fallback_for("height"), Some(SIZE));
+    }
+
+    #[test]
+    fn fallback_color_family() {
+        assert_eq!(fallback_for("color"), Some(FILL));
+        assert_eq!(fallback_for("fill"), Some(FILL));
+    }
+
+    #[test]
+    fn fallback_stroke_family() {
+        assert_eq!(fallback_for("stroke"), Some(STROKE));
+        assert_eq!(fallback_for("strokeWidth"), Some(STROKE_WIDTH));
+        assert_eq!(fallback_for("stroke-width"), Some(STROKE_WIDTH));
+    }
+
+    #[test]
+    fn fallback_unknown_attrs_return_none() {
+        assert_eq!(fallback_for("d"), None);
+        assert_eq!(fallback_for("viewBox"), None);
+        assert_eq!(fallback_for(""), None);
+    }
+}

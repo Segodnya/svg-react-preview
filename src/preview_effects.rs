@@ -46,29 +46,58 @@ use crate::config::{HotkeySpec, Opener};
 #[cfg(target_os = "macos")]
 const DEFAULT_HOTKEY: &str = "cmd+shift+v";
 
-pub fn deliver(path: &Path, opener: &Opener, hotkey: &HotkeySpec) {
+/// Pure decision: given an opener and a hotkey spec (and the host OS, implied
+/// via cfg), what should `deliver` actually do?
+///
+/// Splitting the decision out from the execution lets the full
+/// `opener × hotkey × OS` matrix be tested without spawning subprocesses or
+/// `osascript`.
+#[derive(Debug)]
+enum Plan {
+    /// Spawn `bin path/to/file.svg` and let the editor handle the rest.
+    SpawnOpener { bin: String },
+    /// macOS-only: open the file via `AppleScript` and synthesise the preview
+    /// keystroke chord. `script` is the fully rendered `AppleScript` source.
+    #[cfg(target_os = "macos")]
+    AppleScript { script: String },
+}
+
+fn decide(opener: &Opener, hotkey: &HotkeySpec) -> Plan {
     #[cfg(not(target_os = "macos"))]
     let _ = hotkey;
     #[cfg(target_os = "macos")]
     if opener.synthesise_keystroke()
         && !matches!(hotkey, HotkeySpec::Disabled)
-        && macos::open_and_preview(path, hotkey)
+        && let Some(parsed) = macos::resolve(hotkey)
     {
-        return;
+        return Plan::AppleScript {
+            script: macos::build_script(&parsed),
+        };
     }
-    // Unparseable hotkey or non-macOS or custom opener: just spawn the configured opener.
-    open_in_editor(path, opener);
+    Plan::SpawnOpener {
+        bin: opener.command().to_owned(),
+    }
 }
 
-fn open_in_editor(path: &Path, opener: &Opener) {
-    let bin = opener.command();
-    if Command::new(bin).arg(path).spawn().is_err() {
-        eprintln!(
-            "svg-react-preview: {} not found in PATH; preview saved at: {}",
-            bin,
-            path.display()
-        );
+fn execute(plan: Plan, path: &Path) {
+    match plan {
+        Plan::SpawnOpener { bin } => {
+            if Command::new(&bin).arg(path).spawn().is_err() {
+                eprintln!(
+                    "svg-react-preview: {bin} not found in PATH; preview saved at: {}",
+                    path.display()
+                );
+            }
+        }
+        #[cfg(target_os = "macos")]
+        Plan::AppleScript { script } => {
+            macos::run_with(&script, path, macos::spawn_real);
+        }
     }
+}
+
+pub fn deliver(path: &Path, opener: &Opener, hotkey: &HotkeySpec) {
+    execute(decide(opener, hotkey), path);
 }
 
 #[cfg(target_os = "macos")]
@@ -237,16 +266,7 @@ on run argv
 end run
 "#;
 
-    pub fn open_and_preview(path: &Path, hotkey: &HotkeySpec) -> bool {
-        let Some(parsed) = resolve(hotkey) else {
-            return false;
-        };
-        let script = build_script(&parsed);
-        run_osascript(&script, path);
-        true
-    }
-
-    fn build_script(preview: &Hotkey) -> String {
+    pub(super) fn build_script(preview: &Hotkey) -> String {
         SCRIPT_TEMPLATE
             .replace("__PREVIEW_KEY_CODE__", &preview.key_code.to_string())
             .replace("__PREVIEW_MODIFIERS__", &preview.applescript_clause())
@@ -254,7 +274,7 @@ end run
             .replace("__CLOSE_ITEM__", &CLOSE_ITEM_KEY.to_string())
     }
 
-    fn resolve(hotkey: &HotkeySpec) -> Option<Hotkey> {
+    pub(super) fn resolve(hotkey: &HotkeySpec) -> Option<Hotkey> {
         let spec = match hotkey {
             HotkeySpec::Disabled => return None,
             HotkeySpec::Default => DEFAULT_HOTKEY,
@@ -272,20 +292,55 @@ end run
         parsed
     }
 
-    #[cfg(test)]
-    pub(super) fn resolve_for_test(hotkey: &HotkeySpec) -> Option<super::Hotkey> {
-        resolve(hotkey)
+    #[derive(Clone, Copy)]
+    pub(super) enum Outcome<'a> {
+        Ok,
+        Denied(&'a str),
+        Other,
     }
 
-    #[cfg(test)]
-    pub(super) fn build_script_for_test(preview: &Hotkey) -> String {
-        build_script(preview)
+    pub(super) fn classify(stdout: &str) -> Outcome<'_> {
+        match stdout.trim() {
+            "ok" => Outcome::Ok,
+            s if s.starts_with("denied:") => {
+                Outcome::Denied(s.strip_prefix("denied:").unwrap_or(""))
+            }
+            _ => Outcome::Other,
+        }
     }
 
-    fn run_osascript(script: &str, path: &Path) {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
+    /// Pure rendering of the user-facing message for an outcome.
+    ///
+    /// Split out from `report` so each match arm is killable by a string-equality
+    /// assertion — `report` itself only forwards the result to `eprintln!`.
+    pub(super) fn message_for(outcome: Outcome<'_>) -> Option<String> {
+        match outcome {
+            Outcome::Ok => None,
+            Outcome::Denied(num) => Some(format!(
+                "svg-react-preview: keystroke blocked by macOS (osascript error {num}) — \
+                 grant Accessibility to the app that ran this binary \
+                 (System Settings → Privacy & Security → Accessibility). \
+                 Press the preview shortcut manually for now."
+            )),
+            Outcome::Other => Some(
+                "svg-react-preview: Zed did not come to the foreground in time. \
+                 Press the preview shortcut manually."
+                    .into(),
+            ),
+        }
+    }
 
+    fn report(outcome: Outcome<'_>) {
+        if let Some(msg) = message_for(outcome) {
+            eprintln!("{msg}");
+        }
+    }
+
+    pub(super) fn run_with(
+        script: &str,
+        path: &Path,
+        spawn: impl FnOnce(&str, &str, &str) -> Option<String>,
+    ) {
         let Some(path_str) = path.to_str() else {
             eprintln!(
                 "svg-react-preview: preview path contains non-UTF-8 bytes; \
@@ -298,41 +353,29 @@ end run
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(path_str);
+        if let Some(stdout) = spawn(script, path_str, basename) {
+            report(classify(&stdout));
+        }
+    }
 
-        let Ok(mut child) = Command::new("osascript")
+    pub(super) fn spawn_real(script: &str, path_str: &str, basename: &str) -> Option<String> {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let mut child = Command::new("osascript")
             .args(["-", OSASCRIPT_TIMEOUT_MS, path_str, basename])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-        else {
-            return;
-        };
+            .ok()?;
 
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(script.as_bytes());
         }
 
-        let Ok(output) = child.wait_with_output() else {
-            return;
-        };
-
-        match String::from_utf8_lossy(&output.stdout).trim() {
-            "ok" => {}
-            s if s.starts_with("denied:") => {
-                let num = s.strip_prefix("denied:").unwrap_or("");
-                eprintln!(
-                    "svg-react-preview: keystroke blocked by macOS (osascript error {num}) — \
-                     grant Accessibility to the app that ran this binary \
-                     (System Settings → Privacy & Security → Accessibility). \
-                     Press the preview shortcut manually for now."
-                );
-            }
-            _ => eprintln!(
-                "svg-react-preview: Zed did not come to the foreground in time. \
-                 Press the preview shortcut manually."
-            ),
-        }
+        let output = child.wait_with_output().ok()?;
+        Some(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
 
@@ -414,31 +457,31 @@ mod tests {
 
     #[test]
     fn resolve_default_returns_default_hotkey() {
-        let h = macos::resolve_for_test(&HotkeySpec::Default).unwrap();
+        let h = macos::resolve(&HotkeySpec::Default).unwrap();
         assert_eq!(h.key_code, 9);
         assert_eq!(h.modifiers, ["command down", "shift down"]);
     }
 
     #[test]
     fn resolve_disabled_returns_none() {
-        assert!(macos::resolve_for_test(&HotkeySpec::Disabled).is_none());
+        assert!(macos::resolve(&HotkeySpec::Disabled).is_none());
     }
 
     #[test]
     fn resolve_custom_valid() {
-        let h = macos::resolve_for_test(&HotkeySpec::Custom("f5".into())).unwrap();
+        let h = macos::resolve(&HotkeySpec::Custom("f5".into())).unwrap();
         assert_eq!(h.key_code, 96);
     }
 
     #[test]
     fn resolve_custom_invalid_returns_none() {
-        assert!(macos::resolve_for_test(&HotkeySpec::Custom("garbage".into())).is_none());
+        assert!(macos::resolve(&HotkeySpec::Custom("garbage".into())).is_none());
     }
 
     #[test]
     fn rendered_script_opens_file_and_dispatches_preview_then_closes_text_tab() {
         let preview = parse("cmd+shift+v").unwrap();
-        let script = macos::build_script_for_test(&preview);
+        let script = macos::build_script(&preview);
 
         // Opens the file via AppleScript so focus is guaranteed before the keystroke.
         assert!(script.contains(r#"tell application "Zed" to open POSIX file svgPath"#));
@@ -460,12 +503,178 @@ mod tests {
     #[test]
     fn rendered_script_handles_modifierless_preview_hotkey() {
         let preview = parse("f5").unwrap();
-        let script = macos::build_script_for_test(&preview);
+        let script = macos::build_script(&preview);
 
         // Preview line: "key code 96 \n" (trailing space + newline, no `using` clause).
         assert!(script.contains("key code 96 \n"));
         // Close-tab chord still fires.
         assert!(script.contains("key code 33 using {command down, shift down}"));
         assert!(script.contains("key code 13 using {command down}"));
+    }
+
+    #[test]
+    fn classify_ok() {
+        assert!(matches!(macos::classify("ok"), macos::Outcome::Ok));
+        assert!(matches!(macos::classify("  ok\n"), macos::Outcome::Ok));
+    }
+
+    #[test]
+    fn classify_denied_with_error_number() {
+        let outcome = macos::classify("denied:-1719");
+        assert!(matches!(outcome, macos::Outcome::Denied("-1719")));
+    }
+
+    #[test]
+    fn classify_denied_empty_payload() {
+        // `denied:` without a number still hits the Denied arm (graceful display).
+        let outcome = macos::classify("denied:");
+        assert!(matches!(outcome, macos::Outcome::Denied("")));
+    }
+
+    #[test]
+    fn classify_timeout_falls_through_to_other() {
+        assert!(matches!(macos::classify("timeout"), macos::Outcome::Other));
+    }
+
+    #[test]
+    fn classify_unknown_falls_through_to_other() {
+        // Anything that is not exactly `ok` or `denied:*` is `Other`.
+        assert!(matches!(macos::classify("garbage"), macos::Outcome::Other));
+        // Substring `denied:` not at the start should not trip the guard.
+        assert!(matches!(
+            macos::classify("xdenied:1"),
+            macos::Outcome::Other
+        ));
+        assert!(matches!(macos::classify(""), macos::Outcome::Other));
+    }
+
+    #[test]
+    fn run_with_invokes_spawner_with_path_and_basename() {
+        let path = std::path::PathBuf::from("/tmp/svg-react-preview/abc.svg");
+        let mut got: Option<(String, String, String)> = None;
+        macos::run_with("SCRIPT", &path, |script, path_str, basename| {
+            got = Some((script.into(), path_str.into(), basename.into()));
+            Some("ok".into())
+        });
+        let (script, path_str, basename) = got.expect("spawner must be invoked");
+        assert_eq!(script, "SCRIPT");
+        assert_eq!(path_str, "/tmp/svg-react-preview/abc.svg");
+        assert_eq!(basename, "abc.svg");
+    }
+
+    #[test]
+    fn run_with_skips_spawner_for_non_utf8_path() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = [0x66u8, 0xFF, 0x66]; // `f<invalid>f`
+        let os = OsStr::from_bytes(&bytes);
+        let path = std::path::Path::new(os);
+        macos::run_with("SCRIPT", path, |_, _, _| {
+            panic!("spawner must not be invoked for non-UTF-8 paths");
+        });
+    }
+
+    #[test]
+    fn run_with_handles_spawn_failure_gracefully() {
+        // Spawner returns None (e.g. osascript missing); run_with must not panic
+        // and must not call into the reporter (since we have no stdout to classify).
+        let path = std::path::PathBuf::from("/tmp/x.svg");
+        macos::run_with("SCRIPT", &path, |_, _, _| None);
+    }
+
+    #[test]
+    fn run_with_falls_back_to_path_str_when_no_basename() {
+        // `Path::new("/")` has no `file_name()`; basename must fall back to
+        // path_str rather than the empty string (kills `unwrap_or` mutations).
+        let path = std::path::PathBuf::from("/");
+        let mut got: Option<(String, String)> = None;
+        macos::run_with("SCRIPT", &path, |_, path_str, basename| {
+            got = Some((path_str.into(), basename.into()));
+            Some("ok".into())
+        });
+        let (path_str, basename) = got.expect("spawner must be invoked");
+        assert_eq!(path_str, "/");
+        assert_eq!(basename, "/");
+    }
+
+    #[test]
+    fn message_for_ok_is_silent() {
+        assert!(macos::message_for(macos::Outcome::Ok).is_none());
+    }
+
+    #[test]
+    fn message_for_denied_includes_error_number_and_accessibility_hint() {
+        let msg = macos::message_for(macos::Outcome::Denied("-1719"))
+            .expect("denied must produce a message");
+        assert!(msg.contains("-1719"), "got: {msg}");
+        assert!(msg.contains("Accessibility"), "got: {msg}");
+        assert!(msg.contains("blocked by macOS"), "got: {msg}");
+    }
+
+    #[test]
+    fn message_for_other_indicates_focus_timeout() {
+        let msg = macos::message_for(macos::Outcome::Other).expect("other must produce a message");
+        assert!(msg.contains("foreground"), "got: {msg}");
+        assert!(!msg.contains("Accessibility"), "got: {msg}");
+    }
+
+    // -- Decision matrix for `decide` -----------------------------------------
+    //
+    // The full opener × hotkey × OS matrix has 6 reachable cells (custom opener
+    // always falls back to SpawnOpener regardless of hotkey, so it collapses to
+    // 1; default opener × {Default, Disabled, Custom-valid, Custom-invalid} ×
+    // {macOS, non-macOS} fans out to the rest). All cells are covered below
+    // without spawning subprocesses.
+
+    #[test]
+    fn decide_default_opener_default_hotkey_renders_applescript() {
+        let plan = decide(&Opener::Default, &HotkeySpec::Default);
+        match plan {
+            Plan::AppleScript { script } => {
+                // cmd+shift+v → key code 9 with command+shift modifiers.
+                assert!(
+                    script.contains("key code 9 using {command down, shift down}"),
+                    "got: {script}"
+                );
+            }
+            Plan::SpawnOpener { bin } => panic!("expected AppleScript, got SpawnOpener({bin})"),
+        }
+    }
+
+    #[test]
+    fn decide_default_opener_disabled_hotkey_falls_back_to_spawn() {
+        let plan = decide(&Opener::Default, &HotkeySpec::Disabled);
+        assert!(matches!(plan, Plan::SpawnOpener { ref bin } if bin == "zed"));
+    }
+
+    #[test]
+    fn decide_default_opener_custom_valid_hotkey_renders_applescript_with_custom_keycode() {
+        let plan = decide(&Opener::Default, &HotkeySpec::Custom("f5".into()));
+        match plan {
+            Plan::AppleScript { script } => {
+                // f5 → key code 96, no modifiers → trailing space + newline.
+                assert!(script.contains("key code 96 \n"), "got: {script}");
+            }
+            Plan::SpawnOpener { bin } => panic!("expected AppleScript, got SpawnOpener({bin})"),
+        }
+    }
+
+    #[test]
+    fn decide_default_opener_custom_invalid_hotkey_falls_back_to_spawn() {
+        let plan = decide(&Opener::Default, &HotkeySpec::Custom("garbage".into()));
+        assert!(matches!(plan, Plan::SpawnOpener { ref bin } if bin == "zed"));
+    }
+
+    #[test]
+    fn decide_custom_opener_default_hotkey_skips_keystroke() {
+        // Custom opener implies "I'm routing this elsewhere" — never synthesise.
+        let plan = decide(&Opener::Custom("true".into()), &HotkeySpec::Default);
+        assert!(matches!(plan, Plan::SpawnOpener { ref bin } if bin == "true"));
+    }
+
+    #[test]
+    fn decide_custom_opener_disabled_hotkey_skips_keystroke() {
+        let plan = decide(&Opener::Custom("vim".into()), &HotkeySpec::Disabled);
+        assert!(matches!(plan, Plan::SpawnOpener { ref bin } if bin == "vim"));
     }
 }

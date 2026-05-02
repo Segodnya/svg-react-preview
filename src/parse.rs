@@ -18,7 +18,7 @@ pub const fn tsx_syntax() -> Syntax {
 /// Builds the swc `SourceMap` + `SourceFile` pair every parser in this crate needs.
 /// The map is returned alongside the file because callers that compute byte offsets
 /// (see `expand_selection`) need `fm.start_pos`.
-pub(crate) fn make_source_file(input: &str) -> (Lrc<SourceMap>, Lrc<SourceFile>) {
+pub fn make_source_file(input: &str) -> (Lrc<SourceMap>, Lrc<SourceFile>) {
     let cm: Lrc<SourceMap> = Lrc::default();
     let fm = cm.new_source_file(
         FileName::Custom("input.tsx".into()).into(),

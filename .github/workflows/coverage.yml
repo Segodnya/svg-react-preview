@@ -16,7 +16,7 @@ env:
 
 jobs:
   coverage:
-    name: llvm-cov + Codecov
+    name: llvm-cov gate (>=95%)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,11 +26,4 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      - name: Generate lcov report
-        run: cargo llvm-cov --all-features --workspace --locked --lcov --output-path lcov.info
-      - name: Enforce coverage gate (>=95%)
-        run: cargo llvm-cov report --summary-only --fail-under-lines 95
-      - uses: codecov/codecov-action@v5
-        with:
-          files: lcov.info
-          fail_ci_if_error: true
+      - run: cargo llvm-cov --all-features --workspace --locked --fail-under-lines 95

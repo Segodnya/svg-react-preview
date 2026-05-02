@@ -5,8 +5,13 @@ use swc_ecma_ast::{
 };
 
 use crate::attr_map::{AttrAction, camel_to_kebab, map_attr};
-use crate::defaults;
 use crate::static_eval::{narrow_branch, resolve_attr_value};
+
+const XMLNS: &str = "http://www.w3.org/2000/svg";
+const XMLNS_XLINK: &str = "http://www.w3.org/1999/xlink";
+const VIEW_BOX: &str = "0 0 24 24";
+const SIZE: &str = "24";
+const FILL: &str = "currentColor";
 
 #[derive(Debug, Clone)]
 pub enum SvgNode {
@@ -16,6 +21,11 @@ pub enum SvgNode {
         children: Vec<Self>,
     },
     Text(String),
+    /// Reserved capability — the serializer round-trips comments correctly,
+    /// but the JSX→SVG transform does not yet emit them. Kept under
+    /// `#[allow(dead_code)]` so removing the variant doesn't silently lose
+    /// the serializer's comment-escaping logic.
+    #[allow(dead_code)]
     Comment(String),
 }
 
@@ -189,9 +199,9 @@ fn wrap_root(mut nodes: Vec<SvgNode>, ctx: &Ctx) -> SvgNode {
         else {
             unreachable!()
         };
-        ensure_attr(&mut attrs, "xmlns", defaults::XMLNS);
+        ensure_attr(&mut attrs, "xmlns", XMLNS);
         if ctx.has_xlink {
-            ensure_attr(&mut attrs, "xmlns:xlink", defaults::XMLNS_XLINK);
+            ensure_attr(&mut attrs, "xmlns:xlink", XMLNS_XLINK);
         }
         return SvgNode::Element {
             name,
@@ -205,15 +215,15 @@ fn wrap_root(mut nodes: Vec<SvgNode>, ctx: &Ctx) -> SvgNode {
 }
 
 fn wrap_in_svg(children: Vec<SvgNode>, ctx: &Ctx) -> SvgNode {
-    let mut attrs: Vec<(String, String)> = vec![("xmlns".into(), defaults::XMLNS.into())];
+    let mut attrs: Vec<(String, String)> = vec![("xmlns".into(), XMLNS.into())];
     if ctx.has_xlink {
-        attrs.push(("xmlns:xlink".into(), defaults::XMLNS_XLINK.into()));
+        attrs.push(("xmlns:xlink".into(), XMLNS_XLINK.into()));
     }
     attrs.extend([
-        ("viewBox".into(), defaults::VIEW_BOX.into()),
-        ("width".into(), defaults::SIZE.into()),
-        ("height".into(), defaults::SIZE.into()),
-        ("fill".into(), defaults::FILL.into()),
+        ("viewBox".into(), VIEW_BOX.into()),
+        ("width".into(), SIZE.into()),
+        ("height".into(), SIZE.into()),
+        ("fill".into(), FILL.into()),
     ]);
     SvgNode::Element {
         name: "svg".into(),
@@ -230,20 +240,20 @@ fn ensure_attr(attrs: &mut Vec<(String, String)>, key: &str, val: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::parse::parse_jsx;
-    use crate::serialize::to_xml;
+    use crate::pipeline::render as pipeline_render;
+    use crate::source::Source;
 
     fn render(tsx: &str) -> (String, Vec<String>) {
-        let expr = parse_jsx(tsx).expect("parse_jsx should succeed");
-        let res = to_svg(&expr).expect("to_svg should succeed");
-        (to_xml(&res.root), res.warnings)
+        let r =
+            pipeline_render(Source::Fragment(tsx.into())).expect("pipeline::render must succeed");
+        (r.xml, r.warnings)
     }
 
     #[test]
     fn non_jsx_input_errors() {
-        let expr = parse_jsx("42").unwrap();
-        let err = to_svg(&expr).err().expect("expected error").to_string();
+        let err = pipeline_render(Source::Fragment("42".into()))
+            .expect_err("expected error")
+            .to_string();
         assert!(err.contains("no JSX elements"), "got: {err}");
     }
 

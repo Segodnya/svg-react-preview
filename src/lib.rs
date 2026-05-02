@@ -1,8 +1,9 @@
-pub mod attr_map;
-pub mod defaults;
-pub mod expand_selection;
-pub mod parse;
-pub mod serialize;
+pub mod pipeline;
 pub mod source;
-pub mod static_eval;
-pub mod transform;
+
+pub(crate) mod attr_map;
+pub(crate) mod expand_selection;
+pub(crate) mod parse;
+pub(crate) mod serialize;
+pub(crate) mod static_eval;
+pub(crate) mod transform;

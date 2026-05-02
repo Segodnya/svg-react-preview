@@ -122,7 +122,11 @@ fn writes_svg_file_to_temp_dir() {
     // a no-op `Ok(Default::default())` mutation would leave the dir empty.
     let tmp = tempfile::tempdir().unwrap();
     cli()
+        // `env::temp_dir` reads `TMPDIR` on unix and `TMP`/`TEMP` on windows;
+        // set all three so the SUT lands in our sandbox on every OS.
         .env("TMPDIR", tmp.path())
+        .env("TMP", tmp.path())
+        .env("TEMP", tmp.path())
         .write_stdin(r#"<svg><path d="M0 0"/></svg>"#)
         .assert()
         .success();

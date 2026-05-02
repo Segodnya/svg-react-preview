@@ -1,9 +1,10 @@
-use svg_react_preview::{parse, serialize, transform};
+use svg_react_preview::pipeline;
+use svg_react_preview::source::Source;
 
 fn render(tsx: &str) -> (String, Vec<String>) {
-    let expr = parse::parse_jsx(tsx.trim()).expect("parse should succeed");
-    let res = transform::to_svg(&expr).expect("transform should succeed");
-    (serialize::to_xml(&res.root), res.warnings)
+    let r = pipeline::render(Source::Fragment(tsx.trim().into()))
+        .expect("pipeline::render should succeed");
+    (r.xml, r.warnings)
 }
 
 fn assert_golden(name: &str, tsx: &str, want: &str) {
@@ -114,6 +115,6 @@ fn dangerous_html_dropped_with_warning() {
 #[test]
 fn invalid_jsx_returns_error() {
     let tsx = include_str!("fixtures/invalid_jsx.tsx").trim();
-    let res = parse::parse_jsx(tsx);
-    assert!(res.is_err(), "expected parse error for {tsx:?}");
+    let res = pipeline::render(Source::Fragment(tsx.into()));
+    assert!(res.is_err(), "expected error for {tsx:?}");
 }

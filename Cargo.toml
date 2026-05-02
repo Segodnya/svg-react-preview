@@ -33,3 +33,8 @@ tempfile   = "3"
 version          = "1"
 default-features = false
 features         = ["user-hooks"]
+
+# cargo-udeps cannot see the build-script side effect, so it always flags
+# cargo-husky as unused. Suppress that single false positive here.
+[package.metadata.cargo-udeps.ignore]
+development = ["cargo-husky"]
